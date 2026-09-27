@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Brackenridge — Two Lives</title>
+<link rel="stylesheet" href="src/ui/style.css" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- Loading -->
+  <div id="loading" class="overlay">
+    <div class="loading-box">
+      <h1>BRACKENRIDGE</h1>
+      <h2>TWO LIVES</h2>
+      <div class="bar"><div id="loadbar"></div></div>
+      <p id="loadmsg">Building the town…</p>
+    </div>
+  </div>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div id="hud-top-left">
+      <div class="stat"><span class="lbl">HP</span><div class="meter"><div id="hp" class="fill hp"></div></div></div>
+      <div class="stat"><span class="lbl">STA</span><div class="meter"><div id="sta" class="fill sta"></div></div></div>
+      <div class="stat"><span class="lbl">XP</span><div class="meter"><div id="xp" class="fill xp"></div></div></div>
+      <div id="levelbox">LVL <span id="level">1</span></div>
+    </div>
+    <div id="hud-top-right">
+      <div id="money">$0</div>
+      <div id="clock">08:00</div>
+      <div id="dayinfo">Day 1 · ☀</div>
+      <div id="wanted"></div>
+    </div>
+    <div id="mission-tracker" class="hidden">
+      <div id="mission-title"></div>
+      <ul id="mission-objectives"></ul>
+    </div>
+    <div id="minimap-wrap">
+      <canvas id="minimap" width="180" height="180"></canvas>
+      <div id="compass">N</div>
+    </div>
+    <div id="interact-prompt" class="hidden"></div>
+    <div id="crosshair" class="hidden">+</div>
+    <div id="notifications"></div>
+    <div id="mode-badge">STUDENT</div>
+  </div>
+
+  <!-- Dialogue -->
+  <div id="dialogue" class="overlay hidden">
+    <div class="dialogue-box">
+      <div id="dlg-portrait"></div>
+      <div class="dialogue-main">
+        <div id="dlg-name"></div>
+        <div id="dlg-text"></div>
+        <div id="dlg-choices"></div>
+        <div id="dlg-relbar"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pause / Menus -->
+  <div id="menu" class="overlay hidden">
+    <div class="menu-box">
+      <h2 id="menu-title">PAUSED</h2>
+      <div id="menu-tabs">
+        <button data-tab="main" class="active">Menu</button>
+        <button data-tab="missions">Missions</button>
+        <button data-tab="map">Map</button>
+        <button data-tab="inventory">Inventory</button>
+        <button data-tab="stats">Stats</button>
+        <button data-tab="relationships">People</button>
+        <button data-tab="settings">Settings</button>
+      </div>
+      <div id="menu-content"></div>
+    </div>
+  </div>
+
+  <!-- Shop -->
+  <div id="shop" class="overlay hidden">
+    <div class="shop-box">
+      <h2 id="shop-name">Shop</h2>
+      <div id="shop-money"></div>
+      <div class="shop-cols">
+        <div><h3>Buy</h3><div id="shop-buy"></div></div>
+        <div><h3>Your Items</h3><div id="shop-sell"></div></div>
+      </div>
+      <button id="shop-close" class="btn">Leave (Esc)</button>
+    </div>
+  </div>
+
+  <div id="fade" class="hidden"></div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
