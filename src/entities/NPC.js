@@ -23,6 +23,7 @@ export class NPC {
     this.speed = opts.enemy ? 4.2 : (1.6 + Math.random() * 1.2);
     this.speed01 = 0;
     this.repathT = Math.random() * 3;
+    this.fleeT = 0;
     this.health = opts.enemy ? (opts.hp || 40) : 999;
     this.maxHealth = this.health;
     this.attackCd = 0;
@@ -49,11 +50,31 @@ export class NPC {
     return this.home ? LOCATIONS[this.home] : null;
   }
 
+  /** Civilians scatter away from gunfire or a brawl for a few seconds. */
+  scare(fromPos, seconds = 4) {
+    if (this.dead || this.isEnemy) return;
+    this.fleeT = Math.max(this.fleeT || 0, seconds);
+    const dx = this.pos.x - fromPos.x, dz = this.pos.z - fromPos.z;
+    const len = Math.hypot(dx, dz) || 1;
+    this.target.set(this.pos.x + (dx / len) * 22, 0, this.pos.z + (dz / len) * 22);
+    this.repathT = seconds;
+  }
+
   update(dt, hour, playerPos, onAttackPlayer) {
     if (this.dead) return;
     if (this.hitFlash > 0) { this.hitFlash -= dt; this.group.userData.parts.torso.material.emissive?.setHex(this.hitFlash > 0 ? 0x662222 : 0x000000); }
 
     if (this.isEnemy) return this._updateEnemy(dt, playerPos, onAttackPlayer);
+
+    // Panicking civilians sprint away and ignore their schedule.
+    if (this.fleeT > 0) {
+      this.fleeT -= dt;
+      this._stepToward(this.target, dt, this.speed * 2.1);
+      this.group.position.copy(this.pos);
+      this.group.rotation.y = this.rot;
+      animateWalk(this.group, dt, Math.min(1, this.speed01 * 1.6));
+      return;
+    }
 
     // Named/ambient: move toward schedule/wander target
     this.repathT -= dt;

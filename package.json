@@ -1,13 +1,32 @@
 {
   "name": "brackenridge-two-lives",
   "version": "1.0.0",
-  "description": "Brackenridge: Two Lives — an original 3D open-world browser game (student + gangster storylines) built with Three.js.",
+  "description": "Brackenridge: Two Lives \u2014 an original 3D open-world browser game (student + gangster storylines) built with Three.js.",
   "type": "module",
   "scripts": {
     "start": "npx --yes serve -l 8080 .",
     "serve": "npx --yes serve -l 8080 .",
-    "python": "python3 -m http.server 8080"
+    "python": "python3 -m http.server 8080",
+    "test": "node tests/controller.test.mjs && node tests/world.test.mjs && node tests/integration.test.mjs && node tests/boot.test.mjs",
+    "test:controller": "node tests/controller.test.mjs",
+    "test:world": "node tests/world.test.mjs",
+    "test:integration": "node tests/integration.test.mjs",
+    "test:boot": "node tests/boot.test.mjs"
   },
-  "keywords": ["game", "three.js", "webgl", "open-world", "browser"],
-  "license": "MIT"
+  "keywords": [
+    "game",
+    "three.js",
+    "webgl",
+    "open-world",
+    "browser"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "jsdom": "^30.1.1",
+    "three": "^0.160.0"
+  },
+  "devDependencies": {
+    "jsdom": "^27.0.0",
+    "three": "0.160.0"
+  }
 }

@@ -16,6 +16,11 @@ export const ITEMS = {
   pipe:        { name: 'Lead Pipe',       type: 'weapon', price: 75,   damage: 27, range: 2.7, icon: '🔧', desc: 'Heavy and blunt.' },
   taser:       { name: 'Stun Baton',      type: 'weapon', price: 140,  damage: 40, range: 2.5, icon: '🔌', desc: 'Drops most foes fast.' },
 
+  // Ranged weapons (hold right mouse to aim, left mouse to fire, R to reload)
+  pistol:      { name: '9mm Pistol',      type: 'weapon', ranged: true, price: 320, damage: 34, range: 85, icon: '🔫', desc: 'Sidearm. Aim with right mouse, fire with left.' },
+  revolver:    { name: '.44 Revolver',    type: 'weapon', ranged: true, price: 650, damage: 62, range: 95, icon: '🔫', desc: 'Heavy, slow, and it hits like a truck.' },
+  ammo:        { name: 'Box of Ammo',     type: 'consumable', price: 25, ammo: 24, icon: '📦', desc: 'Refills 24 rounds of reserve ammunition.' },
+
   // Gear
   hoodie:      { name: 'Grey Hoodie',     type: 'gear', price: 30,  armor: 10, icon: '🧥', desc: 'Blend in. Light protection.' },
   jacket:      { name: 'Leather Jacket',  type: 'gear', price: 120, armor: 25, icon: '🧥', desc: 'Street armor with style.' },

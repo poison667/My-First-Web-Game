@@ -27,6 +27,9 @@ export class UI {
       tracker: document.getElementById('mission-tracker'), trackerTitle: document.getElementById('mission-title'), trackerObj: document.getElementById('mission-objectives'),
       minimap: document.getElementById('minimap'), compass: document.getElementById('compass'),
       interact: document.getElementById('interact-prompt'), crosshair: document.getElementById('crosshair'),
+      stance: document.getElementById('stance'), weaponHud: document.getElementById('weapon-hud'),
+      hitmarker: document.getElementById('hitmarker'), vignette: document.getElementById('vignette'),
+      controlsHint: document.getElementById('controls-hint'),
       notifications: document.getElementById('notifications'), modeBadge: document.getElementById('mode-badge'),
       dialogue: document.getElementById('dialogue'), dlgPortrait: document.getElementById('dlg-portrait'), dlgName: document.getElementById('dlg-name'),
       dlgText: document.getElementById('dlg-text'), dlgChoices: document.getElementById('dlg-choices'), dlgRel: document.getElementById('dlg-relbar'),
@@ -82,7 +85,55 @@ export class UI {
     this.el.interact.innerHTML = text;
   }
 
-  setCrosshair(on) { this.el.crosshair.classList.toggle('hidden', !on); }
+  /** Dynamic crosshair: `gap` is the pixel distance from the centre. */
+  setCrosshair(on, gap = 10, aiming = false) {
+    const c = this.el.crosshair;
+    c.classList.toggle('hidden', !on);
+    if (!on) return;
+    c.style.setProperty('--gap', Math.round(gap) + 'px');
+    c.style.setProperty('--len', (aiming ? 6 : 8) + 'px');
+    c.classList.toggle('aiming', !!aiming);
+  }
+
+  setStance(text, tired = false) {
+    if (this._stanceText === text && this._tired === tired) return;
+    this._stanceText = text; this._tired = tired;
+    this.el.stance.textContent = text;
+    this.el.stance.classList.toggle('tired', !!tired);
+  }
+
+  setWeaponHUD(text) {
+    if (this._weaponText === text) return;
+    this._weaponText = text;
+    this.el.weaponHud.classList.toggle('hidden', !text);
+    if (text) this.el.weaponHud.textContent = text;
+  }
+
+  hitmarker(kill = false) {
+    const h = this.el.hitmarker;
+    h.classList.remove('show');
+    h.classList.toggle('kill', !!kill);
+    void h.offsetWidth;          // restart the animation
+    h.classList.add('show');
+  }
+
+  /** Aim vignette blended with a damage vignette. */
+  setVignette(aim = 0, hurt = 0) {
+    const v = this.el.vignette;
+    const hurtStrong = hurt > 0.65;
+    const opacity = Math.min(0.95, aim * 0.55 + (hurtStrong ? (hurt - 0.65) * 2.4 : 0));
+    if (Math.abs((this._vig ?? -1) - opacity) > 0.01) {
+      this._vig = opacity;
+      v.style.opacity = opacity.toFixed(2);
+    }
+    v.classList.toggle('hurt', hurtStrong && aim < 0.2);
+  }
+
+  showControlsHint(show) {
+    if (this._hintShown === show) return;
+    this._hintShown = show;
+    this.el.controlsHint?.classList.toggle('hidden', !show);
+  }
 
   notify(text, type = '') {
     const d = document.createElement('div');
@@ -147,11 +198,22 @@ export class UI {
       <button class="btn secondary" id="btn-save">💾 Save Game</button>
       <button class="btn secondary" id="btn-load">📂 Load Game</button>
       <button class="btn secondary" id="btn-new">✨ New Game</button>
-      <div class="card" style="margin-top:14px"><h3>Controls</h3><p>
-      <span class="kbd">W A S D</span> Move · <span class="kbd">Shift</span> Sprint · <span class="kbd">Space</span> Jump · <span class="kbd">Mouse</span> Look ·
-      <span class="kbd">F</span>/<span class="kbd">Click</span> Attack · <span class="kbd">E</span> Interact / Enter · <span class="kbd">Tab</span> Menu ·
-      <span class="kbd">M</span> Map · <span class="kbd">1-4</span> Quick items · <span class="kbd">Esc</span> Pause · <span class="kbd">V</span> Enter/Exit vehicle
-      </p></div>`;
+      <div class="card" style="margin-top:14px"><h3>Controls</h3>
+      <p><b style="color:#fff">Movement</b><br>
+      <span class="kbd">W A S D</span> Move · <span class="kbd">Shift</span> Sprint · <span class="kbd">Alt</span> Walk ·
+      <span class="kbd">Ctrl</span> hold crouch · <span class="kbd">C</span> toggle crouch · <span class="kbd">Space</span> Jump</p>
+      <p><b style="color:#fff">Parkour</b><br>
+      <span class="kbd">Space</span> at an obstacle vaults low cover or climbs a ledge · run into low cover to auto-vault ·
+      <span class="kbd">E</span> at a ladder to climb, <span class="kbd">W</span>/<span class="kbd">S</span> up and down, <span class="kbd">Space</span> to drop off</p>
+      <p><b style="color:#fff">Combat</b><br>
+      <span class="kbd">F</span> / <span class="kbd">LMB</span> Melee combo · <span class="kbd">G</span> Draw / holster firearm ·
+      <span class="kbd">RMB</span> Aim · <span class="kbd">LMB</span> Fire · <span class="kbd">R</span> Reload</p>
+      <p><b style="color:#fff">World</b><br>
+      <span class="kbd">E</span> Interact / enter buildings · <span class="kbd">V</span> Enter / exit vehicle ·
+      <span class="kbd">Q</span> Swap camera shoulder · <span class="kbd">Wheel</span> Zoom ·
+      <span class="kbd">Tab</span> Menu · <span class="kbd">M</span> Map · <span class="kbd">1-4</span> Quick items · <span class="kbd">Esc</span> Pause</p>
+      <p style="color:#8a93a6">A gamepad works too: sticks move and look, A jump, B crouch, X melee, Y interact, LT aim, RT fire.</p>
+      </div>`;
   }
 
   _missionsTab() {
@@ -241,9 +303,19 @@ export class UI {
       <div class="row"><label>Master Volume</label><input type="range" id="set-master" min="0" max="1" step="0.05" value="${st.masterVolume}"></div>
       <div class="row"><label>Music Volume</label><input type="range" id="set-music" min="0" max="1" step="0.05" value="${st.musicVolume}"></div>
       </div>
-      <div class="card"><h3>Controls</h3>
+      <div class="card"><h3>Camera</h3>
       <div class="row"><label>Look Sensitivity</label><input type="range" id="set-sens" min="0.3" max="2.5" step="0.1" value="${st.sensitivity}"></div>
+      <div class="row"><label>Aim Sensitivity (×)</label><input type="range" id="set-aimsens" min="0.2" max="1.5" step="0.05" value="${st.aimSensitivity ?? 0.6}"></div>
+      <div class="row"><label>Camera Shake</label><input type="range" id="set-shake" min="0" max="1.5" step="0.1" value="${st.cameraShake ?? 1}"></div>
       <div class="row"><label>Invert Y</label><input type="checkbox" id="set-invert" ${st.invertY?'checked':''}></div>
+      <div class="row"><label>Camera Shoulder</label><select id="set-shoulder">
+        <option value="1" ${(st.shoulderSide ?? 1) === 1 ? 'selected' : ''}>Right</option>
+        <option value="-1" ${(st.shoulderSide ?? 1) === -1 ? 'selected' : ''}>Left</option></select></div>
+      </div>
+      <div class="card"><h3>Movement</h3>
+      <div class="row"><label>Hold Ctrl to crouch (off = toggle)</label><input type="checkbox" id="set-togglecrouch" ${st.toggleCrouch?'checked':''}></div>
+      <div class="row"><label>Toggle aim (instead of hold)</label><input type="checkbox" id="set-toggleaim" ${st.toggleAim?'checked':''}></div>
+      <div class="row"><label>Auto-vault when running</label><input type="checkbox" id="set-autovault" ${st.autoVault !== false ?'checked':''}></div>
       </div>`;
   }
 
@@ -257,7 +329,7 @@ export class UI {
       q('btn-new').onclick = () => { if (confirm('Start a new game? Unsaved progress is lost.')) this.hooks.newGame?.(); };
     } else if (tab === 'inventory') {
       this.el.menuContent.querySelectorAll('.use').forEach(b => b.onclick = () => { this.hooks.useItem?.(b.dataset.id); this._renderTab('inventory'); });
-      this.el.menuContent.querySelectorAll('.equipw').forEach(b => b.onclick = () => { this.state.equipWeapon(b.dataset.id); this._renderTab('inventory'); });
+      this.el.menuContent.querySelectorAll('.equipw').forEach(b => b.onclick = () => { (this.hooks.equipWeapon ?? ((id) => this.state.equipWeapon(id)))(b.dataset.id); this._renderTab('inventory'); });
       this.el.menuContent.querySelectorAll('.equipg').forEach(b => b.onclick = () => { this.state.equipGear(b.dataset.id); this._renderTab('inventory'); });
     } else if (tab === 'settings') {
       q('set-preset').onchange = (e) => this.hooks.applySettings?.({ preset: e.target.value });
@@ -265,7 +337,13 @@ export class UI {
       q('set-master').oninput = (e) => this.hooks.applySettings?.({ masterVolume: parseFloat(e.target.value) });
       q('set-music').oninput = (e) => this.hooks.applySettings?.({ musicVolume: parseFloat(e.target.value) });
       q('set-sens').oninput = (e) => this.hooks.applySettings?.({ sensitivity: parseFloat(e.target.value) });
+      q('set-aimsens').oninput = (e) => this.hooks.applySettings?.({ aimSensitivity: parseFloat(e.target.value) });
+      q('set-shake').oninput = (e) => this.hooks.applySettings?.({ cameraShake: parseFloat(e.target.value) });
       q('set-invert').onchange = (e) => this.hooks.applySettings?.({ invertY: e.target.checked });
+      q('set-shoulder').onchange = (e) => this.hooks.applySettings?.({ shoulderSide: parseInt(e.target.value, 10) });
+      q('set-togglecrouch').onchange = (e) => this.hooks.applySettings?.({ toggleCrouch: e.target.checked });
+      q('set-toggleaim').onchange = (e) => this.hooks.applySettings?.({ toggleAim: e.target.checked });
+      q('set-autovault').onchange = (e) => this.hooks.applySettings?.({ autoVault: e.target.checked });
     }
   }
 

@@ -67,11 +67,63 @@ export class AudioManager {
     o.stop(this.ctx.currentTime + dur);
   }
 
+  // --- Noise burst used for footsteps, landings and gunshots ---------------
+  _noiseBuffer() {
+    if (this._noise) return this._noise;
+    const len = Math.floor(this.ctx.sampleRate * 0.4);
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    this._noise = buf;
+    return buf;
+  }
+
+  noise({ dur = 0.08, vol = 0.2, freq = 900, q = 1.1, type = 'bandpass', sweep = 0 } = {}) {
+    if (!this.ctx) return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this._noiseBuffer();
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = type;
+    filt.frequency.value = freq;
+    filt.Q.value = q;
+    const g = this.ctx.createGain();
+    const now = this.ctx.currentTime;
+    g.gain.setValueAtTime(vol, now);
+    g.gain.exponentialRampToValueAtTime(0.0008, now + dur);
+    if (sweep) filt.frequency.exponentialRampToValueAtTime(Math.max(60, freq + sweep), now + dur);
+    src.connect(filt); filt.connect(g); g.connect(this.master);
+    src.start(now);
+    src.stop(now + dur + 0.02);
+  }
+
   ui() { this.blip(720, 0.05, 'square', 0.15); }
   confirm() { this.blip(880, 0.09, 'square', 0.2); this.blip(1174, 0.09, 'square', 0.15); }
   hit() { this.blip(120, 0.12, 'sawtooth', 0.3); }
   hurt() { this.blip(90, 0.18, 'sawtooth', 0.35); }
   cash() { this.blip(988, 0.06, 'triangle', 0.2); this.blip(1318, 0.08, 'triangle', 0.2); }
   fail() { this.blip(200, 0.2, 'sawtooth', 0.25); this.blip(140, 0.25, 'sawtooth', 0.25); }
-  jump() { this.blip(520, 0.08, 'sine', 0.15); }
+  jump() { this.noise({ dur: 0.09, vol: 0.09, freq: 420, q: 0.8 }); this.blip(520, 0.07, 'sine', 0.08); }
+
+  // --- Player controller feedback -----------------------------------------
+  footstep(intensity = 0.6, crouch = false) {
+    const v = (crouch ? 0.045 : 0.1) * (0.6 + intensity * 0.7);
+    this.noise({ dur: crouch ? 0.05 : 0.075, vol: v, freq: 320 + Math.random() * 180, q: 0.9, sweep: -180 });
+  }
+  land(hard = false) {
+    this.noise({ dur: hard ? 0.22 : 0.12, vol: hard ? 0.3 : 0.15, freq: hard ? 180 : 280, q: 0.7, sweep: -140 });
+    if (hard) this.blip(70, 0.18, 'sine', 0.22);
+  }
+  whoosh(power = 1) {
+    this.noise({ dur: 0.16 * power, vol: 0.08 * power, freq: 1200, q: 0.6, sweep: -900 });
+  }
+  climb() { this.noise({ dur: 0.14, vol: 0.09, freq: 520, q: 0.8, sweep: -260 }); }
+  shot(heavy = false) {
+    this.noise({ dur: heavy ? 0.22 : 0.14, vol: heavy ? 0.4 : 0.3, freq: heavy ? 900 : 1500, q: 0.5, sweep: -1200 });
+    this.blip(heavy ? 90 : 140, 0.08, 'square', 0.18);
+  }
+  slide() { this.noise({ dur: 0.3, vol: 0.09, freq: 700, q: 0.5, sweep: -400 }); }
+  engine(speed01 = 0) {
+    // short tick whose pitch rises with speed — called sparsely while driving
+    this.blip(80 + speed01 * 160, 0.05, 'sawtooth', 0.05);
+  }
 }

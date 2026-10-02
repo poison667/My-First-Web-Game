@@ -102,8 +102,8 @@ export const INTERIORS = {
 // Shops: stock is a list of item ids. Prices come from ITEMS (buyMul on buy).
 export const SHOPS = {
   store:    { name: 'Corner Store', buyMul: 1.0, sellMul: 0.4, stock: ['soda','burger','energy','candy','coffee','spraycan','medkit'] },
-  hardware: { name: 'Hardware & Sports', buyMul: 1.0, sellMul: 0.45, stock: ['bat','skateboard','crowbar','pipe','lockpick','medkit'] },
+  hardware: { name: 'Hardware & Sports', buyMul: 1.0, sellMul: 0.45, stock: ['bat','skateboard','crowbar','pipe','lockpick','medkit','ammo'] },
   clothing: { name: 'Threads Boutique', buyMul: 1.0, sellMul: 0.5, stock: ['hoodie','jacket','varsity','backpack','flowers','necklace'] },
   diner:    { name: "Rosa's Diner", buyMul: 1.0, sellMul: 0.3, stock: ['burger','coffee','soda','medkit'] },
-  pawn:     { name: 'Cash Corner Pawn', buyMul: 1.15, sellMul: 0.65, stock: ['crowbar','taser','lockpick','necklace','mixtape'] },
+  pawn:     { name: 'Cash Corner Pawn', buyMul: 1.15, sellMul: 0.65, stock: ['crowbar','taser','lockpick','necklace','mixtape','pistol','revolver','ammo'] },
 };

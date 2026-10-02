@@ -1,33 +1,140 @@
 // Central configuration & tunable constants
 export const CONFIG = {
-  version: '1.0.0',
+  version: '2.0.0',
   saveKey: 'brackenridge_save_v1',
   settingsKey: 'brackenridge_settings_v1',
 
+  // ---------------------------------------------------------------------
+  // PLAYER CONTROLLER
+  // Tuned for a responsive, weighty third-person feel:
+  //  - instant input response with short acceleration ramps
+  //  - separate speed tiers (walk / jog / sprint / crouch / aim)
+  //  - forgiving jump (coyote time + input buffering + variable height)
+  //  - parkour thresholds that decide step / vault / mantle / climb
+  // ---------------------------------------------------------------------
   player: {
-    walkSpeed: 5.2,
-    runSpeed: 9.5,
-    jumpForce: 7.2,
-    gravity: 20,
-    height: 1.8,
-    radius: 0.45,
-    maxHealth: 100,
+    // --- capsule & proportions (metres) ---
+    height: 1.82,
+    crouchHeight: 1.20,
+    radius: 0.36,
+    eyeHeight: 1.62,
+    crouchEyeHeight: 1.05,
+
+    // --- speed tiers (m/s) ---
+    walkSpeed: 1.95,        // hold Alt (or gentle stick)
+    jogSpeed: 4.50,         // default movement
+    sprintSpeed: 7.60,      // hold Shift
+    crouchSpeed: 1.75,
+    aimSpeed: 2.60,         // while aiming down sights
+    backpedalMul: 0.70,     // slower moving backwards
+    strafeMul: 0.88,
+
+    // --- acceleration / friction ---
+    groundAccel: 34,
+    groundDecel: 42,
+    sprintAccel: 24,
+    airAccel: 14,
+    airControl: 0.62,
+    airDrag: 0.25,
+    turnSpeed: 14,          // rad/s, how fast the body yaws to face movement
+    turnSpeedFast: 8,       // at sprint speed (wider arcs, more natural)
+    aimTurnSpeed: 24,       // snappier when strafing/aiming
+
+    // --- jump & gravity ---
+    gravity: 23,
+    jumpVelocity: 6.7,
+    sprintJumpBoost: 0.85,
+    lowJumpGravityMul: 2.2, // released jump early -> short hop
+    fallGravityMul: 1.35,   // snappier descent
+    maxFallSpeed: 42,
+    coyoteTime: 0.13,
+    jumpBufferTime: 0.17,
+    landRecovery: 0.22,
+    hardLandSpeed: 16,      // triggers heavy landing
+    fallDamageSpeed: 23,    // below this, no damage
+    fallDamageScale: 3.4,
+
+    // --- stamina ---
     maxStamina: 100,
-    staminaDrain: 18,   // per second while sprinting
-    staminaRegen: 14,   // per second while not sprinting
+    sprintDrain: 11,
+    jumpCost: 5,
+    climbDrain: 8,
+    staminaRegen: 19,
+    staminaRegenDelay: 0.7,
+    exhaustedRecover: 22,   // stamina needed before sprinting again
+
+    // --- parkour thresholds (relative to foot height) ---
+    stepHeight: 0.45,       // walked over automatically
+    vaultMinHeight: 0.45,
+    vaultMaxHeight: 1.32,   // railings, crates, car hoods -> vault over
+    vaultMaxDepth: 2.3,     // thicker than this: mantle on top instead
+    vaultDuration: 0.52,
+    mantleMaxHeight: 2.45,  // ledges, roofs, containers -> climb up
+    mantleDuration: 0.80,
+    ledgeReach: 0.80,       // forward probe distance
+    ladderSpeed: 2.5,
+
+    // --- melee combat ---
+    maxHealth: 100,
     attackDamage: 12,
     attackRange: 2.4,
     attackCooldown: 0.45,
+    comboWindow: 0.62,      // time after a strike to chain the next hit
+    meleeLunge: 3.2,        // forward impulse on each swing
+
+    // legacy aliases (kept so older saves/systems keep working)
+    walkSpeedLegacy: 5.2,
+    runSpeed: 7.6,
+    jumpForce: 6.7,
   },
 
+  // ---------------------------------------------------------------------
+  // THIRD-PERSON CAMERA (spring arm)
+  // ---------------------------------------------------------------------
   camera: {
-    distance: 6.5,
-    minDistance: 2.5,
-    maxDistance: 11,
-    height: 2.0,
-    sensitivity: 0.0024,
-    minPitch: -0.9,
-    maxPitch: 0.9,
+    distance: 5.2,
+    minDistance: 1.6,
+    maxDistance: 9.5,
+    height: 1.58,           // pivot height above the feet
+    crouchHeight: 1.08,
+    shoulder: 0.55,         // lateral offset of the pivot
+    sensitivity: 0.0022,
+    minPitch: -1.15,
+    maxPitch: 1.05,
+    collisionRadius: 0.28,
+    followLag: 14,          // horizontal pivot follow stiffness
+    followLagY: 9,          // vertical follow (softer, hides step-ups)
+    rotateLag: 26,          // look smoothing (high = snappy)
+    pullInSpeed: 60,        // camera collision: retract fast
+    pullOutSpeed: 6,        // extend slowly
+    fov: 62,
+    fovSprint: 72,
+    fovAim: 44,
+    fovVehicle: 70,
+    aimDistance: 1.9,
+    aimShoulder: 0.78,
+    aimHeight: 1.60,
+    sprintDistance: 5.9,
+    crouchDistance: 4.2,
+    vehicleDistance: 8.4,
+    vehicleHeight: 2.4,
+    lookAhead: 0.28,        // leads the camera in the direction of travel
+  },
+
+  // ---------------------------------------------------------------------
+  // RANGED WEAPONS
+  // ---------------------------------------------------------------------
+  weapons: {
+    pistol: {
+      name: 'Pistol', damage: 34, fireRate: 0.21, magSize: 12, reloadTime: 1.35,
+      range: 85, spreadHip: 0.055, spreadAim: 0.008, spreadMove: 0.05,
+      recoilPitch: 0.035, recoilYaw: 0.012, shake: 0.22, muzzle: 0.32,
+    },
+    revolver: {
+      name: 'Revolver', damage: 62, fireRate: 0.55, magSize: 6, reloadTime: 2.1,
+      range: 95, spreadHip: 0.07, spreadAim: 0.012, spreadMove: 0.06,
+      recoilPitch: 0.075, recoilYaw: 0.02, shake: 0.45, muzzle: 0.42,
+    },
   },
 
   world: {
@@ -50,6 +157,12 @@ export const CONFIG = {
     musicVolume: 0.5,
     invertY: false,
     sensitivity: 1.0,
+    aimSensitivity: 0.6,     // multiplier applied while aiming
+    toggleCrouch: false,     // Ctrl holds, C always toggles
+    toggleAim: false,
+    autoVault: true,         // vault automatically when running into low cover
+    cameraShake: 1.0,
+    shoulderSide: 1,         // 1 = right shoulder, -1 = left
   },
 };
 

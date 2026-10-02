@@ -24,6 +24,7 @@ export class GameState {
 
     this.inventory = { soda: 2 };
     this.equippedWeapon = 'fists';
+    this.ammo = { mag: 0, reserve: 0 };   // ranged weapon ammunition
     this.equippedGear = null;
     this.maxSlots = 12;
 
@@ -161,6 +162,7 @@ export class GameState {
       maxHealth: this.maxHealth, health: this.health, maxStamina: this.maxStamina, stamina: this.stamina,
       money: this.money, xp: this.xp, level: this.level, xpToNext: this.xpToNext,
       inventory: this.inventory, equippedWeapon: this.equippedWeapon, equippedGear: this.equippedGear, maxSlots: this.maxSlots,
+      ammo: this.ammo,
       reputation: this.reputation, relationships: this.relationships, romance: this.romance, flags: this.flags,
       wanted: this.wanted, completed: this.completed, activeMission: this.activeMission, missionProgress: this.missionProgress,
       mode: this.mode, time: this.time, playSeconds: this.playSeconds, spawn: this.spawn, collected: this.collected,
@@ -169,6 +171,7 @@ export class GameState {
   deserialize(d) {
     if (!d) return;
     Object.assign(this, d);
+    if (!this.ammo) this.ammo = { mag: 0, reserve: 0 };
     // Ensure new relationship entries exist if data changed.
     for (const id of Object.keys(NPCS)) {
       if (!this.relationships[id]) this.relationships[id] = { friendship: 0, trust: 0, respect: 0, rivalry: 0, fear: 0, affinity: 0, met: false };

@@ -1,89 +1,841 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config.js';
-import { buildCharacter, animateWalk } from './Character.js';
+import { buildPlayerRig } from './PlayerRig.js';
+import { PlayerAnimator, FIST_COMBO, WEAPON_COMBO } from './PlayerAnimator.js';
+
+// ---------------------------------------------------------------------------
+// Third-person player controller.
+//
+// Motion states
+//   ground   normal locomotion (idle/walk/jog/sprint/crouch) + jumping
+//   air      airborne, with air control and landing prediction
+//   vault    scripted motion over a low obstacle
+//   mantle   scripted motion climbing onto a ledge
+//   ladder   attached to a ladder volume
+//   vehicle  driving (character hidden, controller dormant)
+//   ko       knocked out
+//
+// Feel notes
+//   * velocity based, with separate accel/decel so stops are crisp but not icy
+//   * coyote time + jump buffering + variable jump height
+//   * the body yaws smoothly toward the movement direction, but snaps to the
+//     camera when aiming (strafe mode)
+//   * ledges are probed every frame so vaults/mantles trigger on contact
+// ---------------------------------------------------------------------------
+
+const P = CONFIG.player;
+const TAU = Math.PI * 2;
+
+function shortestAngle(from, to) {
+  let d = (to - from) % TAU;
+  if (d > Math.PI) d -= TAU;
+  if (d < -Math.PI) d += TAU;
+  return d;
+}
+
+const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
 
 export class Player {
-  constructor(scene, state) {
+  constructor(scene, state, opts = {}) {
+    this.scene = scene;
     this.state = state;
-    this.group = buildCharacter({ color: 0x2f6f9f, pants: 0x22303a, hair: 0x1a1410 });
+    this.world = opts.world || null;
+    this.settings = opts.settings || CONFIG.defaultSettings;
+    this.onEvent = opts.onEvent || (() => {});
+
+    this.rig = buildPlayerRig(opts.outfit);
+    this.group = this.rig.root;
     scene.add(this.group);
-    this.pos = new THREE.Vector3(-96, 0, 55);
-    this.velY = 0;
+    this.animator = new PlayerAnimator(this.rig);
+    this.animator.onFootstep = (side, intensity) => {
+      if (this.motion === 'ground' && this.grounded) {
+        this.onEvent('footstep', { side, intensity, sprint: this.sprinting, crouch: this.stance === 'crouch' });
+      }
+    };
+
+    // --- transform / physics ---
+    this.pos = new THREE.Vector3(0, 0, 0);
+    this.vel = new THREE.Vector3(0, 0, 0);
+    this.rot = 0;                     // facing yaw (forward = sin/cos of rot)
+    this.turnRate = 0;
+    this.radius = P.radius;
+    this.height = P.height;
+    this.targetHeight = P.height;
+
+    // --- state machine ---
+    this.motion = 'ground';
+    this.stance = 'stand';
     this.grounded = true;
-    this.rot = 0;               // facing yaw
-    this.attackT = 0;
-    this.attackCd = 0;
-    this.speed01 = 0;
+    this.groundBox = null;
+    this.coyoteT = 0;
+    this.jumpBufferT = 0;
+    this.airTime = 0;
+    this.landT = 0;
+    this.hardLand = false;
+    this.lastFallSpeed = 0;
+    this.crouchToggled = false;
+
+    // --- speed / stamina ---
+    this.speed = 0;
+    this.speedNorm = 0;
+    this.sprinting = false;
+    this.walkMod = false;
+    this.exhausted = false;
+    this.staminaDelay = 0;
+    this.accelMag = 0;
+
+    // --- combat ---
+    this.aiming = false;
+    this.aimWeight = 0;
+    this.aimToggled = false;
+    this.attack = { active: false, type: 'jab', t: 0, duration: 0.4, applied: false, weight: 1, def: null };
+    this.comboIndex = -1;
+    this.comboT = 0;
+    this.flinch = 0;
+    this.weaponKind = 'fists';
+    this.weaponDrawn = true;
+
+    // --- scripted motion ---
+    this.scripted = null;
+    this.ladder = null;
+    this.ladderCooldown = 0;
     this.inVehicle = null;
-    this.radius = CONFIG.player.radius;
+    this.koT = 0;
+
+    this._tmpDir = { x: 0, z: 1 };
+    this.moveLocal = { x: 0, z: 0 };
+    this.lastGroundY = 0;
+    this.jumpHeldTime = 0;
   }
+
+  // =========================================================================
+  // Public helpers
+  // =========================================================================
 
   setPosition(x, y, z, rot) {
     this.pos.set(x, y ?? 0, z);
     if (rot !== undefined) this.rot = rot;
-    this.group.position.copy(this.pos);
-  }
-
-  // moveDir in world XZ (already camera-relative), run bool, jump bool
-  update(dt, moveDir, run, jump, colliders) {
-    if (this.inVehicle) { this.group.visible = false; return; }
-    this.group.visible = true;
-
-    const p = CONFIG.player;
-    const len = Math.hypot(moveDir.x, moveDir.z);
-    let speed = 0;
-    if (len > 0.01) {
-      const nx = moveDir.x / len, nz = moveDir.z / len;
-      const canRun = run && this.state.stamina > 1;
-      speed = canRun ? p.runSpeed : p.walkSpeed;
-      this.speed01 = canRun ? 1 : 0.5;
-      // stamina
-      if (canRun) this.state.stamina = Math.max(0, this.state.stamina - p.staminaDrain * dt);
-      this.rot = Math.atan2(nx, nz);
-
-      let dx = nx * speed * dt, dz = nz * speed * dt;
-      this._moveAxis(dx, 0, colliders);
-      this._moveAxis(0, dz, colliders);
-    } else {
-      this.speed01 = 0;
-    }
-    if (!(run && len > 0.01)) {
-      this.state.stamina = Math.min(this.state.maxStamina, this.state.stamina + p.staminaRegen * dt);
-    }
-
-    // gravity / jump
-    if (jump && this.grounded) { this.velY = p.jumpForce; this.grounded = false; }
-    this.velY -= p.gravity * dt;
-    this.pos.y += this.velY * dt;
-    if (this.pos.y <= 0) { this.pos.y = 0; this.velY = 0; this.grounded = true; }
-
-    // attack timing
-    if (this.attackCd > 0) this.attackCd -= dt;
-    if (this.attackT > 0) this.attackT -= dt / p.attackCooldown;
-    if (this.attackT < 0) this.attackT = 0;
-
+    this.vel.set(0, 0, 0);
+    this.motion = 'ground';
+    this.scripted = null;
+    this.ladder = null;
+    this.grounded = true;
     this.group.position.copy(this.pos);
     this.group.rotation.y = this.rot;
-    animateWalk(this.group, dt, this.grounded ? this.speed01 : 0.2, this.attackT);
-  }
-
-  _moveAxis(dx, dz, colliders) {
-    const nx = this.pos.x + dx, nz = this.pos.z + dz;
-    const r = this.radius;
-    for (const c of colliders) {
-      if (nx + r > c.minX && nx - r < c.maxX && nz + r > c.minZ && nz - r < c.maxZ) {
-        return; // blocked on this axis
-      }
-    }
-    this.pos.x = nx; this.pos.z = nz;
-  }
-
-  tryAttack() {
-    if (this.attackCd > 0) return false;
-    this.attackCd = CONFIG.player.attackCooldown;
-    this.attackT = 1;
-    return true;
   }
 
   forward() { return new THREE.Vector3(Math.sin(this.rot), 0, Math.cos(this.rot)); }
+  right() { return new THREE.Vector3(-Math.cos(this.rot), 0, Math.sin(this.rot)); }
+  eyePosition() {
+    const h = this.stance === 'crouch' ? P.crouchEyeHeight : P.eyeHeight;
+    return new THREE.Vector3(this.pos.x, this.pos.y + h, this.pos.z);
+  }
+  centerPosition() { return new THREE.Vector3(this.pos.x, this.pos.y + this.height * 0.55, this.pos.z); }
+  isBusy() { return this.motion === 'vault' || this.motion === 'mantle'; }
+  canAct() { return this.motion === 'ground' || this.motion === 'ladder'; }
+
+  setWeapon(kind, drawn = true) {
+    this.weaponKind = kind;
+    this.weaponDrawn = drawn;
+    this.rig.setWeaponVisual(kind, drawn);
+  }
+
+  // =========================================================================
+  // Main update
+  // =========================================================================
+
+  /**
+   * @param {number} dt
+   * @param {object} ctx { input, camYaw, camPitch, blockInput, canAim }
+   */
+  update(dt, ctx) {
+    this._tickTimers(dt);
+
+    switch (this.motion) {
+      case 'vehicle': this._updateVehicle(dt, ctx); break;
+      case 'vault':
+      case 'mantle': this._updateScripted(dt); break;
+      case 'ladder': this._updateLadder(dt, ctx); break;
+      case 'ko': this._updateKO(dt); break;
+      default: this._updateGround(dt, ctx); break;
+    }
+
+    this._updateAttack(dt);
+    this._applyTransform();
+    this._animate(dt, ctx);
+  }
+
+  _tickTimers(dt) {
+    if (this.jumpBufferT > 0) this.jumpBufferT -= dt;
+    if (this.comboT > 0) { this.comboT -= dt; if (this.comboT <= 0) this.comboIndex = -1; }
+    if (this.landT > 0) this.landT = Math.max(0, this.landT - dt / P.landRecovery);
+    if (this.flinch > 0) this.flinch = Math.max(0, this.flinch - dt * 2.6);
+    if (this.ladderCooldown > 0) this.ladderCooldown -= dt;
+    if (this.staminaDelay > 0) this.staminaDelay -= dt;
+  }
+
+  // =========================================================================
+  // Ground / air locomotion
+  // =========================================================================
+
+  _updateGround(dt, ctx) {
+    const input = ctx.input;
+    const blocked = !!ctx.blockInput;
+    const move = blocked ? { x: 0, z: 0 } : input.move;
+    const mag = Math.min(1, Math.hypot(move.x, move.z));
+
+    this._updateStance(dt, input, blocked);
+    this._updateAim(dt, input, ctx, blocked);
+
+    // ---- desired direction, relative to the camera ------------------------
+    const camYaw = ctx.camYaw || 0;
+    const fx = Math.sin(camYaw), fz = Math.cos(camYaw);
+    const rx = -Math.cos(camYaw), rz = Math.sin(camYaw);
+    let dx = fx * -move.z + rx * move.x;
+    let dz = fz * -move.z + rz * move.x;
+    const dlen = Math.hypot(dx, dz);
+    if (dlen > 1e-4) { dx /= dlen; dz /= dlen; } else { dx = 0; dz = 0; }
+    if (dlen > 1e-4) { this._tmpDir.x = dx; this._tmpDir.z = dz; }
+
+    // ---- speed tier -------------------------------------------------------
+    const stam = this.state.stamina ?? 100;
+    this.walkMod = !blocked && input.down('walk');
+    const wantsSprint = !blocked && input.down('sprint') && mag > 0.35 && this.stance === 'stand' && !this.aiming;
+    if (this.exhausted && stam > P.exhaustedRecover) this.exhausted = false;
+    if (stam <= 0.5) this.exhausted = true;
+    this.sprinting = wantsSprint && !this.exhausted && this.grounded && !this.attack.active;
+
+    let targetSpeed;
+    if (this.stance === 'crouch') targetSpeed = P.crouchSpeed;
+    else if (this.aiming) targetSpeed = P.aimSpeed;
+    else if (this.walkMod) targetSpeed = P.walkSpeed;
+    else if (this.sprinting) targetSpeed = P.sprintSpeed;
+    else targetSpeed = P.jogSpeed;
+    targetSpeed *= mag;
+    if (this.attack.active) targetSpeed *= 0.42;
+    if (this.landT > 0 && this.hardLand) targetSpeed *= 0.55 + 0.45 * (1 - this.landT);
+
+    // Directional penalties make strafing/backpedalling feel grounded.
+    if (dlen > 1e-4) {
+      const lz = dx * Math.sin(this.rot) + dz * Math.cos(this.rot);
+      const lx = dx * -Math.cos(this.rot) + dz * Math.sin(this.rot);
+      this.moveLocal.x = lx; this.moveLocal.z = lz;
+      if (this.aiming || this.stance === 'crouch') {
+        if (lz < -0.2) targetSpeed *= P.backpedalMul;
+        else if (Math.abs(lx) > 0.5) targetSpeed *= P.strafeMul;
+      }
+    } else {
+      this.moveLocal.x *= 0.85; this.moveLocal.z *= 0.85;
+    }
+
+    // ---- stamina ----------------------------------------------------------
+    if (this.sprinting && this.speed > 1.5) {
+      this.state.stamina = Math.max(0, this.state.stamina - P.sprintDrain * dt);
+      this.staminaDelay = P.staminaRegenDelay;
+    } else if (this.staminaDelay <= 0) {
+      const regen = this.stance === 'crouch' ? P.staminaRegen * 1.35 : P.staminaRegen;
+      this.state.stamina = Math.min(this.state.maxStamina, this.state.stamina + regen * dt);
+    }
+
+    // ---- horizontal acceleration -----------------------------------------
+    const tvx = dx * targetSpeed, tvz = dz * targetSpeed;
+    let accel;
+    if (!this.grounded) accel = P.airAccel * (dlen > 0 ? P.airControl : 0.35);
+    else if (dlen > 0) accel = this.sprinting ? P.sprintAccel : P.groundAccel;
+    else accel = P.groundDecel;
+
+    const dvx = tvx - this.vel.x, dvz = tvz - this.vel.z;
+    const dvLen = Math.hypot(dvx, dvz);
+    const maxDelta = accel * dt;
+    if (dvLen <= maxDelta || dvLen < 1e-5) {
+      if (this.grounded || dlen > 0) { this.vel.x = tvx; this.vel.z = tvz; }
+    } else {
+      this.vel.x += (dvx / dvLen) * maxDelta;
+      this.vel.z += (dvz / dvLen) * maxDelta;
+    }
+    if (!this.grounded && dlen === 0) {
+      const drag = Math.max(0, 1 - P.airDrag * dt);
+      this.vel.x *= drag; this.vel.z *= drag;
+    }
+    this.accelMag = dvLen > 0 ? Math.min(dvLen, maxDelta) / Math.max(dt, 1e-4) * Math.sign(targetSpeed - this.speed) : 0;
+
+    // ---- body rotation ----------------------------------------------------
+    let targetRot = this.rot;
+    const strafeMode = this.aiming;
+    if (strafeMode) targetRot = camYaw;
+    else if (dlen > 1e-4) targetRot = Math.atan2(dx, dz);
+
+    const turnSpeed = strafeMode
+      ? P.aimTurnSpeed
+      : P.turnSpeed - (P.turnSpeed - P.turnSpeedFast) * Math.min(1, this.speed / P.sprintSpeed);
+    const delta = shortestAngle(this.rot, targetRot);
+    const step = Math.sign(delta) * Math.min(Math.abs(delta), turnSpeed * dt);
+    this.rot += step;
+    this.turnRate = step / Math.max(dt, 1e-4);
+
+    // ---- jump -------------------------------------------------------------
+    if (!blocked && input.pressed('jump')) this.jumpBufferT = P.jumpBufferTime;
+    if (input.down('jump')) this.jumpHeldTime += dt; else this.jumpHeldTime = 0;
+
+    if (this.jumpBufferT > 0 && !this.attack.active) {
+      // A jump into an obstacle becomes a vault or a climb.
+      if (this._tryParkour(true)) {
+        this.jumpBufferT = 0;
+      } else if ((this.grounded || this.coyoteT > 0) && this.motion === 'ground') {
+        if (this.stance === 'crouch') {
+          if (this._tryStand()) this.jumpBufferT = 0.05;   // stand first, jump next frame
+        } else {
+          this._doJump();
+        }
+      }
+    }
+
+    // ---- gravity ----------------------------------------------------------
+    let g = P.gravity;
+    if (this.vel.y < 0) g *= P.fallGravityMul;
+    else if (this.vel.y > 0 && !input.down('jump')) g *= P.lowJumpGravityMul;
+    this.vel.y = Math.max(-P.maxFallSpeed, this.vel.y - g * dt);
+
+    // ---- integrate + collide ---------------------------------------------
+    const world = this.world;
+    const prevY = this.pos.y;
+    const wasGrounded = this.grounded;
+
+    if (world) {
+      const hres = world.moveXZ(this.pos, this.vel.x * dt, this.vel.z * dt,
+        this.radius, this.height, this.grounded ? P.stepHeight : 0.2);
+      if (hres.hit) {
+        // Cancel velocity into the wall so we slide instead of sticking.
+        if (hres.nx !== 0) this.vel.x = 0;
+        if (hres.nz !== 0) this.vel.z = 0;
+        // Auto-vault: running into low cover hops over it without extra input.
+        if (this.settings.autoVault !== false && this.grounded && this.speed > 3.2 &&
+            !this.aiming && this.stance === 'stand') {
+          this._tryParkour(false);
+        }
+      }
+      this.pos.y += this.vel.y * dt;
+
+      // ceiling
+      if (this.vel.y > 0) {
+        const ceil = world.ceilingAt(this.pos.x, this.pos.z, this.pos.y, this.radius);
+        if (ceil < this.pos.y + this.height) {
+          this.pos.y = Math.max(prevY, ceil - this.height - 0.01);
+          this.vel.y = Math.min(this.vel.y, -0.5);
+        }
+      }
+
+      // ground / landing
+      const probeY = Math.max(prevY, this.pos.y);
+      const support = world.groundAt(this.pos.x, this.pos.z, probeY, this.radius, 0.02);
+      const snapDist = (wasGrounded && this.vel.y <= 0.02) ? 0.42 : 0;
+      if (this.pos.y <= support.y + 1e-3) {
+        this._land(support, -this.vel.y);
+      } else if (snapDist > 0 && this.pos.y - support.y <= snapDist) {
+        this.pos.y = support.y;
+        this.vel.y = 0;
+        this.grounded = true;
+        this.groundBox = support.box;
+      } else {
+        if (this.grounded) this.coyoteT = P.coyoteTime;
+        this.grounded = false;
+      }
+      world.depenetrate(this.pos, this.radius, this.height);
+    } else {
+      this.pos.x += this.vel.x * dt;
+      this.pos.z += this.vel.z * dt;
+      this.pos.y += this.vel.y * dt;
+      if (this.pos.y <= 0) this._land({ y: 0, box: null }, -this.vel.y);
+    }
+
+    // ---- post state -------------------------------------------------------
+    if (!this.grounded) {
+      this.airTime += dt;
+      this.coyoteT = Math.max(0, this.coyoteT - dt);
+      this.lastFallSpeed = Math.max(this.lastFallSpeed, -this.vel.y);
+      // Ledge grab while falling next to a climbable surface.
+      if (this.vel.y < -1 && this.airTime > 0.12) this._tryParkour(false, true);
+    } else {
+      this.airTime = 0;
+      this.coyoteT = P.coyoteTime;
+      this.lastGroundY = this.pos.y;
+    }
+
+    this.speed = Math.hypot(this.vel.x, this.vel.z);
+    this.speedNorm = Math.min(1.2, this.speed / P.sprintSpeed);
+
+    // ---- ladders: proximity only; attaching is driven by the interaction
+    // system so the prompt and the action always agree.
+    this.nearLadder = (world && this.ladderCooldown <= 0 && this.motion === 'ground')
+      ? world.nearestLadder(this.pos, 1.4) : null;
+  }
+
+  _doJump() {
+    const boost = this.sprinting ? P.sprintJumpBoost : 0;
+    this.vel.y = P.jumpVelocity + boost;
+    this.grounded = false;
+    this.coyoteT = 0;
+    this.jumpBufferT = 0;
+    this.airTime = 0.001;
+    this.state.stamina = Math.max(0, this.state.stamina - P.jumpCost);
+    this.staminaDelay = P.staminaRegenDelay;
+    this.onEvent('jump', { sprint: this.sprinting });
+  }
+
+  _land(support, impactSpeed) {
+    const wasAir = !this.grounded;
+    this.pos.y = support.y;
+    this.vel.y = 0;
+    this.grounded = true;
+    this.groundBox = support.box;
+    if (!wasAir) return;
+
+    const speed = Math.max(impactSpeed, this.lastFallSpeed);
+    this.lastFallSpeed = 0;
+    this.hardLand = speed > P.hardLandSpeed;
+    this.landT = this.hardLand ? 1 : Math.min(1, 0.35 + speed / 26);
+    if (this.hardLand) {
+      // Heavy landings bleed speed and stamina.
+      this.vel.x *= 0.45; this.vel.z *= 0.45;
+      this.state.stamina = Math.max(0, this.state.stamina - 8);
+    }
+    let damage = 0;
+    if (speed > P.fallDamageSpeed) damage = Math.round((speed - P.fallDamageSpeed) * P.fallDamageScale);
+    this.onEvent('land', { speed, hard: this.hardLand, damage });
+  }
+
+  // =========================================================================
+  // Stance (crouch) + aim
+  // =========================================================================
+
+  _updateStance(dt, input, blocked) {
+    const holdCrouch = !blocked && input.down('crouch');
+    if (!blocked && input.pressed('crouchToggle')) this.crouchToggled = !this.crouchToggled;
+    if (this.settings.toggleCrouch && !blocked && input.pressed('crouch')) this.crouchToggled = !this.crouchToggled;
+
+    let wantCrouch = this.crouchToggled || (this.settings.toggleCrouch ? false : holdCrouch);
+    if (!this.grounded && this.motion === 'ground') wantCrouch = wantCrouch && this.stance === 'crouch';
+    if (this.sprinting && !this.crouchToggled) wantCrouch = false;
+
+    if (wantCrouch && this.stance === 'stand') {
+      this.stance = 'crouch';
+      this.targetHeight = P.crouchHeight;
+      this.onEvent('crouch', { on: true });
+    } else if (!wantCrouch && this.stance === 'crouch') {
+      this._tryStand();
+    }
+
+    // Smooth capsule height so the camera doesn't pop.
+    const k = 1 - Math.exp(-16 * dt);
+    this.height += (this.targetHeight - this.height) * k;
+    if (Math.abs(this.targetHeight - this.height) < 0.005) this.height = this.targetHeight;
+  }
+
+  /** Stand up if there is headroom; returns success. */
+  _tryStand() {
+    if (this.stance === 'stand') return true;
+    if (this.world && !this.world.isFree(this.pos.x, this.pos.y, this.pos.z, this.radius, P.height)) {
+      return false;   // blocked by a ceiling: stay crouched
+    }
+    this.stance = 'stand';
+    this.crouchToggled = false;
+    this.targetHeight = P.height;
+    this.onEvent('crouch', { on: false });
+    return true;
+  }
+
+  _updateAim(dt, input, ctx, blocked) {
+    const canAim = !!ctx.canAim && this.motion === 'ground' && !blocked;
+    if (this.settings.toggleAim) {
+      if (canAim && input.pressed('aim')) this.aimToggled = !this.aimToggled;
+      if (!canAim) this.aimToggled = false;
+      this.aiming = canAim && this.aimToggled;
+    } else {
+      this.aiming = canAim && input.down('aim');
+    }
+    if (this.aiming && this.sprinting) this.sprinting = false;
+    const k = 1 - Math.exp(-14 * dt);
+    this.aimWeight += ((this.aiming ? 1 : 0) - this.aimWeight) * k;
+  }
+
+  // =========================================================================
+  // Parkour: step / vault / mantle
+  // =========================================================================
+
+  /**
+   * Classify the obstacle in front of the player without acting on it.
+   * @returns {null|{kind:'vault'|'mantle', target:THREE.Vector3, control:THREE.Vector3, dirX:number, dirZ:number, rel:number}}
+   */
+  probeParkour(fromJump, airborne = false) {
+    const world = this.world;
+    if (!world || this.motion !== 'ground') return null;
+    if (this.stance === 'crouch' && !fromJump) return null;
+
+    // Direction: current movement, else facing.
+    let dx = this._tmpDir.x, dz = this._tmpDir.z;
+    if (this.speed > 0.6) { dx = this.vel.x / this.speed; dz = this.vel.z / this.speed; }
+    const dl = Math.hypot(dx, dz);
+    if (dl < 1e-4) { dx = Math.sin(this.rot); dz = Math.cos(this.rot); } else { dx /= dl; dz /= dl; }
+
+    const reach = P.ledgeReach + this.radius;
+    const probe = world.probeAhead(this.pos, dx, dz, this.radius, this.height, reach);
+    if (!probe) return null;
+    if (probe.dist > P.ledgeReach) return null;
+
+    const box = probe.box;
+    const rel = probe.top - this.pos.y;
+    if (rel <= P.stepHeight + 0.02) return null;             // handled by step-up
+    if (airborne && rel < 0.6) return null;
+
+    const farDist = world.depthAlong(box, this.pos, dx, dz);
+    const thickness = farDist - probe.dist;
+    const standH = P.height;
+
+    // --- vault over thin obstacles ---------------------------------------
+    if (box.vault !== false && rel >= P.vaultMinHeight && rel <= P.vaultMaxHeight &&
+        thickness <= P.vaultMaxDepth && !airborne) {
+      const tx = this.pos.x + dx * (farDist + this.radius + 0.35);
+      const tz = this.pos.z + dz * (farDist + this.radius + 0.35);
+      const landing = world.groundAt(tx, tz, probe.top + 0.1, this.radius, 99);
+      const drop = probe.top - landing.y;
+      if (drop < 3.2 && world.isFree(tx, landing.y + 0.05, tz, this.radius, standH)) {
+        return {
+          kind: 'vault', dirX: dx, dirZ: dz, rel,
+          target: new THREE.Vector3(tx, landing.y, tz),
+          control: new THREE.Vector3(
+            this.pos.x + dx * (probe.dist + this.radius * 0.6), probe.top + 0.35,
+            this.pos.z + dz * (probe.dist + this.radius * 0.6)),
+          duration: P.vaultDuration * (0.85 + rel / P.vaultMaxHeight * 0.3),
+          cost: 7,
+        };
+      }
+    }
+
+    // --- mantle onto ledges ----------------------------------------------
+    const maxClimb = (fromJump || airborne) ? P.mantleMaxHeight : P.mantleMaxHeight * 0.75;
+    if (box.climb !== false && rel > 0 && rel <= maxClimb) {
+      const onTop = Math.min(probe.dist + this.radius + 0.42, Math.max(farDist - this.radius - 0.05, probe.dist + 0.1));
+      const tx = this.pos.x + dx * onTop;
+      const tz = this.pos.z + dz * onTop;
+      const standable = world.groundAt(tx, tz, probe.top + 0.05, this.radius, 0.05);
+      if (Math.abs(standable.y - probe.top) < 0.12 && world.isFree(tx, probe.top + 0.06, tz, this.radius, standH)) {
+        return {
+          kind: 'mantle', dirX: dx, dirZ: dz, rel,
+          target: new THREE.Vector3(tx, probe.top, tz),
+          control: new THREE.Vector3(this.pos.x + dx * 0.1, probe.top + 0.08, this.pos.z + dz * 0.1),
+          duration: P.mantleDuration * (0.7 + rel / P.mantleMaxHeight * 0.55),
+          cost: 14,
+        };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Probe for a climbable obstacle and start the matching motion.
+   * @param {boolean} fromJump  triggered by the jump key (allows higher climbs)
+   * @param {boolean} airborne  mid-air ledge grab
+   */
+  _tryParkour(fromJump, airborne = false) {
+    const plan = this.probeParkour(fromJump, airborne);
+    if (!plan) return false;
+    if (this.state.stamina < plan.cost * 0.5) { this.onEvent('too-tired', {}); return false; }
+    this._startScripted(plan.kind, plan.dirX, plan.dirZ, plan.target, plan.control, plan.duration);
+    this.state.stamina = Math.max(0, this.state.stamina - plan.cost);
+    this.staminaDelay = P.staminaRegenDelay;
+    return true;
+  }
+
+  /** 'vault' | 'mantle' | null — used for the on-screen prompt. */
+  ledgeHint() {
+    if (this.motion !== 'ground' || !this.grounded) return null;
+    const plan = this.probeParkour(true, false);
+    return plan ? plan.kind : null;
+  }
+
+  _startScripted(kind, dx, dz, target, control, duration) {
+    this.motion = kind;
+    this.scripted = {
+      kind,
+      t: 0,
+      duration: Math.max(0.2, duration),
+      from: this.pos.clone(),
+      control,
+      to: target,
+      dirX: dx, dirZ: dz,
+      exitSpeed: kind === 'vault' ? Math.max(this.speed, 3.4) : 1.6,
+    };
+    this.rot = Math.atan2(dx, dz);
+    this.vel.set(0, 0, 0);
+    this.grounded = false;
+    this.aiming = false;
+    this.attack.active = false;
+    this.onEvent(kind, { height: target.y - this.pos.y });
+  }
+
+  _updateScripted(dt) {
+    const s = this.scripted;
+    if (!s) { this.motion = 'ground'; return; }
+    s.t += dt;
+    const u = Math.min(1, s.t / s.duration);
+    const e = easeInOut(u);
+    // Quadratic Bezier through the control point gives a natural arc.
+    const inv = 1 - e;
+    this.pos.x = inv * inv * s.from.x + 2 * inv * e * s.control.x + e * e * s.to.x;
+    this.pos.y = inv * inv * s.from.y + 2 * inv * e * s.control.y + e * e * s.to.y;
+    this.pos.z = inv * inv * s.from.z + 2 * inv * e * s.control.z + e * e * s.to.z;
+    this.scriptedProgress = u;
+
+    if (u >= 1) {
+      this.pos.copy(s.to);
+      this.motion = 'ground';
+      this.grounded = true;
+      this.landT = 0.35;
+      this.hardLand = false;
+      this.vel.set(s.dirX * s.exitSpeed, 0, s.dirZ * s.exitSpeed);
+      this.onEvent(s.kind + '-end', {});
+      this.scripted = null;
+    }
+  }
+
+  // =========================================================================
+  // Ladders
+  // =========================================================================
+
+  startLadder(l) {
+    this.ladder = l;
+    this.motion = 'ladder';
+    this.vel.set(0, 0, 0);
+    this.rot = l.yaw;
+    const back = 0.42;
+    this.pos.x = l.x - Math.sin(l.yaw) * back;
+    this.pos.z = l.z - Math.cos(l.yaw) * back;
+    this.pos.y = Math.max(this.pos.y, l.bottom);
+    this.stance = 'stand';
+    this.targetHeight = P.height;
+    this.grounded = false;
+    this.onEvent('ladder-enter', {});
+  }
+
+  exitLadder(push = true) {
+    this.motion = 'ground';
+    this.ladder = null;
+    this.ladderCooldown = 0.45;
+    if (push) {
+      const f = this.forward();
+      this.vel.set(-f.x * 2.4, 2.2, -f.z * 2.4);
+    }
+    this.onEvent('ladder-exit', {});
+  }
+
+  _updateLadder(dt, ctx) {
+    const l = this.ladder;
+    const input = ctx.input;
+    if (!l) { this.motion = 'ground'; return; }
+    const blocked = !!ctx.blockInput;
+    const move = blocked ? { x: 0, z: 0 } : input.move;
+
+    const up = -move.z;                       // W climbs up
+    const climbSpeed = P.ladderSpeed * (input.down('sprint') ? 1.5 : 1);
+    this.ladderSpeedNorm = Math.abs(up);
+    this.pos.y += up * climbSpeed * dt;
+
+    if (Math.abs(up) > 0.1) {
+      this.state.stamina = Math.max(0, this.state.stamina - P.climbDrain * dt * 0.5);
+      this.staminaDelay = P.staminaRegenDelay;
+    }
+
+    // Small lateral shuffle to line up
+    this.rot += shortestAngle(this.rot, l.yaw) * Math.min(1, 10 * dt);
+
+    // Reached the top: mantle onto the platform.
+    if (this.pos.y >= l.top - 0.25 && up > 0.1) {
+      const dx = Math.sin(l.yaw), dz = Math.cos(l.yaw);
+      const tx = l.x + dx * (this.radius + 0.35);
+      const tz = l.z + dz * (this.radius + 0.35);
+      const ground = this.world ? this.world.groundAt(tx, tz, l.top + 0.3, this.radius, 0.6) : { y: l.top };
+      this.ladder = null;
+      this.ladderCooldown = 0.4;
+      this.motion = 'ground';
+      this._startScripted('mantle', dx, dz,
+        new THREE.Vector3(tx, ground.y, tz),
+        new THREE.Vector3(l.x, l.top + 0.25, l.z),
+        0.55);
+      return;
+    }
+    // Bottom: step off.
+    if (this.pos.y <= l.bottom + 0.05 && up < -0.05) {
+      this.pos.y = l.bottom;
+      this.exitLadder(false);
+      this.grounded = true;
+      return;
+    }
+    if (!blocked && (input.pressed('jump') || input.pressed('interact'))) { this.exitLadder(true); return; }
+    if (this.state.stamina <= 0) { this.exitLadder(false); }
+  }
+
+  // =========================================================================
+  // Vehicle
+  // =========================================================================
+
+  enterVehicle(vehicle) {
+    this.inVehicle = vehicle;
+    this.motion = 'vehicle';
+    this.vel.set(0, 0, 0);
+    this.attack.active = false;
+    this.aiming = false;
+    this.group.visible = false;
+    this.onEvent('vehicle-enter', { vehicle });
+  }
+
+  exitVehicle(x, y, z, rot) {
+    this.inVehicle = null;
+    this.motion = 'ground';
+    this.group.visible = true;
+    this.setPosition(x, y, z, rot);
+    this.landT = 0.4;
+    this.onEvent('vehicle-exit', {});
+  }
+
+  _updateVehicle(dt, ctx) {
+    const v = this.inVehicle;
+    if (!v) { this.motion = 'ground'; this.group.visible = true; return; }
+    this.pos.set(v.pos.x, v.pos.y, v.pos.z);
+    this.rot = v.rot;
+    this.speed = Math.abs(v.speed || 0);
+    this.speedNorm = Math.min(1, this.speed / 20);
+    this.grounded = true;
+  }
+
+  // =========================================================================
+  // Combat
+  // =========================================================================
+
+  /** Start (or chain) a melee attack. Returns true if a swing started. */
+  meleeAttack() {
+    if (this.motion !== 'ground' || !this.grounded) return false;
+    if (this.attack.active && this.attack.t < this.attack.duration * 0.42) return false;
+    if (this.state.stamina < 4) { this.onEvent('too-tired', {}); return false; }
+
+    const usingWeapon = this.weaponKind !== 'fists' && this.weaponKind !== 'pistol';
+    const combo = usingWeapon ? WEAPON_COMBO : FIST_COMBO;
+    this.comboIndex = this.comboT > 0 ? (this.comboIndex + 1) % combo.length : 0;
+    const type = combo[this.comboIndex];
+    const def = PlayerAnimator.attackDef(type);
+
+    this.attack = { active: true, type, t: 0, duration: def.duration, applied: false, weight: 1, def };
+    this.comboT = def.duration + P.comboWindow;
+    this.state.stamina = Math.max(0, this.state.stamina - 4 - def.damage * 2);
+    this.staminaDelay = P.staminaRegenDelay;
+
+    // Small forward lunge keeps combos feeling connected.
+    const f = this.forward();
+    const lunge = P.meleeLunge * (def.lunge || 1) * (this.stance === 'crouch' ? 0.4 : 1);
+    this.vel.x += f.x * lunge * 0.35;
+    this.vel.z += f.z * lunge * 0.35;
+    this.onEvent('melee-start', { type, index: this.comboIndex });
+    return true;
+  }
+
+  /** Legacy name used by older systems. */
+  tryAttack() { return this.meleeAttack(); }
+
+  _updateAttack(dt) {
+    const a = this.attack;
+    if (!a.active) return;
+    a.t += dt;
+    const def = a.def || PlayerAnimator.attackDef(a.type);
+    if (!a.applied && a.t >= def.duration * def.hitAt) {
+      a.applied = true;
+      this.onEvent('melee-strike', {
+        type: a.type,
+        damageMul: def.damage,
+        rangeMul: def.range,
+        index: this.comboIndex,
+      });
+    }
+    if (a.t >= def.duration) { a.active = false; a.weight = 0; }
+  }
+
+  hurt(amount, fromPos) {
+    this.flinch = Math.min(1, 0.6 + amount / 40);
+    if (fromPos) {
+      const dx = this.pos.x - fromPos.x, dz = this.pos.z - fromPos.z;
+      const l = Math.hypot(dx, dz) || 1;
+      this.vel.x += (dx / l) * Math.min(3.5, amount * 0.12);
+      this.vel.z += (dz / l) * Math.min(3.5, amount * 0.12);
+    }
+    this.onEvent('hurt', { amount });
+  }
+
+  knockOut() {
+    this.motion = 'ko';
+    this.koT = 0;
+    this.vel.set(0, 0, 0);
+    this.attack.active = false;
+    this.aiming = false;
+  }
+  _updateKO(dt) {
+    this.koT = Math.min(1, this.koT + dt * 3);
+    if (!this.grounded && this.world) {
+      this.vel.y -= P.gravity * dt;
+      this.pos.y += this.vel.y * dt;
+      const support = this.world.groundAt(this.pos.x, this.pos.z, this.pos.y, this.radius, 0.1);
+      if (this.pos.y <= support.y) { this.pos.y = support.y; this.vel.y = 0; this.grounded = true; }
+    }
+  }
+  revive() { this.motion = 'ground'; this.koT = 0; this.flinch = 0; }
+
+  // =========================================================================
+  // Presentation
+  // =========================================================================
+
+  _applyTransform() {
+    this.group.position.set(this.pos.x, this.pos.y, this.pos.z);
+    this.group.rotation.y = this.rot;
+    this.group.visible = this.motion !== 'vehicle';
+  }
+
+  _animate(dt, ctx) {
+    const camYaw = ctx.camYaw || 0;
+    const lookYawOffset = shortestAngle(this.rot, camYaw);
+    this.animator.update(dt, {
+      motion: this.motion,
+      speed: this.speed,
+      speedNorm: this.speedNorm,
+      accel: this.accelMag,
+      moveLocal: this.moveLocal,
+      stance: this.stance,
+      grounded: this.grounded,
+      vertVel: this.vel.y,
+      airTime: this.airTime,
+      landT: this.landT,
+      hardLand: this.hardLand,
+      aim: this.aimWeight,
+      aimPitch: -(ctx.camPitch || 0),
+      attack: this.attack,
+      climbT: this.scriptedProgress || 0,
+      ladderSpeed: this.ladderSpeedNorm || 0,
+      flinch: this.flinch,
+      koT: this.koT,
+      turnRate: this.turnRate,
+      lookYawOffset,
+      lookPitch: ctx.camPitch || 0,
+    });
+  }
+
+  /** Compact snapshot for HUD / camera / save data. */
+  describeState() {
+    if (this.motion === 'vehicle') return 'DRIVING';
+    if (this.motion === 'ladder') return 'CLIMBING';
+    if (this.motion === 'mantle') return 'CLIMBING';
+    if (this.motion === 'vault') return 'VAULTING';
+    if (!this.grounded) return this.vel.y > 0.5 ? 'JUMPING' : 'FALLING';
+    if (this.stance === 'crouch') return this.speed > 0.3 ? 'SNEAKING' : 'CROUCHED';
+    if (this.aiming) return 'AIMING';
+    if (this.sprinting && this.speed > 1) return 'SPRINTING';
+    if (this.speed > P.jogSpeed * 0.75) return 'RUNNING';
+    if (this.speed > 0.3) return 'WALKING';
+    return 'IDLE';
+  }
 }

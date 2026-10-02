@@ -42,9 +42,20 @@
       <div id="compass">N</div>
     </div>
     <div id="interact-prompt" class="hidden"></div>
-    <div id="crosshair" class="hidden">+</div>
+    <div id="crosshair" class="hidden">
+      <i class="ch top"></i><i class="ch bottom"></i><i class="ch left"></i><i class="ch right"></i><i class="ch dot"></i>
+    </div>
+    <div id="hitmarker"></div>
     <div id="notifications"></div>
     <div id="mode-badge">STUDENT</div>
+    <div id="state-strip">
+      <span id="stance">IDLE</span>
+      <span id="weapon-hud" class="hidden"></span>
+    </div>
+    <div id="controls-hint">
+      <b>WASD</b> move · <b>Shift</b> sprint · <b>Alt</b> walk · <b>Ctrl/C</b> crouch · <b>Space</b> jump / vault / climb ·
+      <b>E</b> interact · <b>V</b> vehicle · <b>F</b> melee · <b>G</b> draw gun · <b>RMB</b> aim · <b>Q</b> shoulder
+    </div>
   </div>
 
   <!-- Dialogue -->
@@ -90,6 +101,7 @@
     </div>
   </div>
 
+  <div id="vignette"></div>
   <div id="fade" class="hidden"></div>
 
   <script type="importmap">

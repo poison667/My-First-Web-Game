@@ -59,7 +59,44 @@ canvas#game { position: fixed; inset: 0; display: block; }
 #interact-prompt { position: absolute; bottom: 42%; left: 50%; transform: translateX(-50%); background: var(--panel);
   padding: 8px 16px; border-radius: 20px; font-size: 15px; border: 1px solid rgba(255,255,255,.2); }
 #interact-prompt b { color: var(--accent); }
-#crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 24px; color: rgba(255,255,255,.7); }
+/* --- dynamic crosshair: four bars whose gap tracks weapon spread --- */
+#crosshair { position: absolute; top: 50%; left: 50%; width: 0; height: 0; --gap: 10px; --len: 8px; --col: rgba(255,255,255,.85); }
+#crosshair .ch { position: absolute; background: var(--col); box-shadow: 0 0 3px rgba(0,0,0,.9); transition: opacity .12s; }
+#crosshair .top    { width: 2px; height: var(--len); left: -1px; top: calc(-1 * (var(--gap) + var(--len))); }
+#crosshair .bottom { width: 2px; height: var(--len); left: -1px; top: var(--gap); }
+#crosshair .left   { height: 2px; width: var(--len); top: -1px; left: calc(-1 * (var(--gap) + var(--len))); }
+#crosshair .right  { height: 2px; width: var(--len); top: -1px; left: var(--gap); }
+#crosshair .dot    { width: 2px; height: 2px; left: -1px; top: -1px; border-radius: 50%; opacity: .75; }
+#crosshair.aiming { --col: rgba(255,210,90,.95); }
+
+#hitmarker { position: absolute; top: 50%; left: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px;
+  opacity: 0; pointer-events: none;
+  background:
+    linear-gradient(45deg, transparent 44%, #fff 44%, #fff 56%, transparent 56%),
+    linear-gradient(-45deg, transparent 44%, #fff 44%, #fff 56%, transparent 56%);
+  filter: drop-shadow(0 0 2px #000); }
+#hitmarker.show { animation: hm .22s ease-out; }
+#hitmarker.kill { filter: drop-shadow(0 0 3px #ef476f); background:
+    linear-gradient(45deg, transparent 44%, #ff7a8a 44%, #ff7a8a 56%, transparent 56%),
+    linear-gradient(-45deg, transparent 44%, #ff7a8a 44%, #ff7a8a 56%, transparent 56%); }
+@keyframes hm { 0% { opacity: 1; transform: scale(.6); } 100% { opacity: 0; transform: scale(1.25); } }
+
+/* --- stance / weapon strip --- */
+#state-strip { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 10px; align-items: center; font-size: 12px; letter-spacing: 2px; }
+#stance { background: rgba(10,12,18,.72); border: 1px solid rgba(255,255,255,.14); border-radius: 14px;
+  padding: 5px 14px; color: #cdd3e0; font-weight: bold; min-width: 108px; text-align: center; transition: color .2s, border-color .2s; }
+#stance.tired { color: var(--danger); border-color: rgba(239,71,111,.6); }
+#weapon-hud { background: rgba(10,12,18,.72); border: 1px solid rgba(255,255,255,.14); border-radius: 14px;
+  padding: 5px 14px; color: var(--accent); font-weight: bold; }
+
+#controls-hint { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%);
+  font-size: 11px; color: rgba(205,211,224,.5); letter-spacing: .4px; white-space: nowrap; }
+#controls-hint b { color: rgba(255,202,58,.75); }
+
+#vignette { position: fixed; inset: 0; pointer-events: none; z-index: 21; opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 42%, rgba(0,0,0,.75) 100%); transition: opacity .18s; }
+#vignette.hurt { background: radial-gradient(ellipse at center, transparent 38%, rgba(120,8,24,.8) 100%); }
 
 #mode-badge { position: absolute; bottom: 16px; left: 16px; background: var(--panel); padding: 6px 14px;
   border-radius: 4px; font-weight: bold; letter-spacing: 2px; font-size: 13px; border-left: 3px solid var(--accent2); }
