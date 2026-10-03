@@ -98,6 +98,21 @@ const game = new HeadlessGame(canvas);
 window.localStorage.clear();
 await game.init();
 
+const SPAWN = game.player.pos.clone();
+
+/** Yaw with the most clear space ahead of `pos` (so sprint tests can run). */
+function clearestHeading(pos) {
+  let best = 0, bestDist = -1;
+  for (let i = 0; i < 24; i++) {
+    const yaw = (i / 24) * Math.PI * 2;
+    const hit = game.world.raycast({ x: pos.x, y: 1.0, z: pos.z },
+      { x: Math.sin(yaw), y: 0, z: Math.cos(yaw) }, 40);
+    const d = hit ? hit.dist : 40;
+    if (d > bestDist) { bestDist = d; best = yaw; }
+  }
+  return { yaw: best, dist: bestDist };
+}
+
 /** Pump N animation frames at 60 Hz of virtual time. */
 function frames(n = 1) {
   for (let i = 0; i < n; i++) {
@@ -158,6 +173,31 @@ test('crouch changes the capsule and the readout', () => {
   key('keyup', 'ControlLeft');
   frames(30);
   assert(game.player.stance === 'stand', 'stood back up');
+});
+
+test('sprint + crouch slides, and the HUD says so', () => {
+  // Reset to the spawn and face the longest clear stretch of road.
+  const lane = clearestHeading(SPAWN);
+  assert(lane.dist > 12, `found ${lane.dist.toFixed(1)}m of clear road`);
+  game.player.setPosition(SPAWN.x, SPAWN.y, SPAWN.z, lane.yaw);
+  game.camCtrl.yaw = game.camCtrl.yawTarget = lane.yaw;
+  game.state.stamina = game.state.maxStamina;   // the earlier sprints drained it
+  frames(2);
+  key('keydown', 'ShiftLeft');
+  frames(90);                                   // get back up to sprint speed
+  assert(game.player.sprinting, 'sprinting before the slide');
+  assert(game.player.speed > 5.4, `at slide speed (${game.player.speed.toFixed(2)} m/s)`);
+  key('keydown', 'ControlLeft');
+  frames(2);
+  assert(game.player.motion === 'slide',
+    `motion is ${game.player.motion} (speed ${game.player.speed.toFixed(2)}, stamina ${game.state.stamina.toFixed(0)})`);
+  assert(/SLID/i.test(window.document.getElementById('stance').textContent), 'stance readout');
+  key('keyup', 'ControlLeft');
+  key('keyup', 'ShiftLeft');
+  for (let i = 0; i < 180 && game.player.motion === 'slide'; i++) frames(1);
+  assert(game.player.motion === 'ground', 'slide resolved back to normal movement');
+  assert(game.player.stance === 'stand', 'stood back up');
+  frames(40);
 });
 
 test('space jumps', () => {

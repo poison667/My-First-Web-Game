@@ -190,6 +190,7 @@ export class PlayerAnimator {
     else if (s.motion === 'ladder') this._poseLadder(p, s);
     else if (s.motion === 'vault') this._poseVault(p, s);
     else if (s.motion === 'mantle') this._poseMantle(p, s);
+    else if (s.motion === 'slide') this._poseSlide(p, s);
     else if (!s.grounded) this._poseAir(p, s);
     else if (s.stance === 'crouch') this._poseCrouch(p, s, speedNorm);
     else this._poseLocomotion(p, s, speedNorm);
@@ -425,6 +426,40 @@ export class PlayerAnimator {
     p.rKnee = lerp(0.15, 1.25, pull) * (1 - stand * 0.5) + 0.12;
     p.hipsY = -0.2 * pull * (1 - stand) + reach * 0.03;
     p.hipsYaw = 0.1 * pull;
+  }
+
+  /** Baseball-slide: trailing leg tucked, lead leg out, torso laid back. */
+  _poseSlide(p, s) {
+    const u = clamp((s.slideT ?? 0) / 0.18, 0, 1);          // entry blend
+    const out = clamp(1 - ((s.slideT ?? 0) - 0.55) / 0.5, 0, 1);
+    const w = u * out;
+
+    p.hipsY = -0.62 * w;
+    p.hipsPitch = -0.30 * w;
+    p.hipsRoll = 0.26 * w;
+    p.hipsYaw = -0.22 * w;
+
+    p.spinePitch = -0.30 * w;
+    p.spineRoll = 0.14 * w;
+    p.chestPitch = -0.12 * w;
+    p.chestYaw = 0.18 * w;
+    p.neckPitch = 0.34 * w;
+
+    // lead leg straight out in front, trailing leg folded underneath
+    p.lThighP = -1.30 * w;
+    p.lKnee = 0.22 * w;
+    p.lFootP = -0.25 * w;
+    p.rThighP = -0.30 * w;
+    p.rKnee = 1.85 * w;
+    p.rFootP = 0.30 * w;
+
+    // one arm trails behind for balance, the other braces across the body
+    p.lArmP = -0.55 * w;
+    p.lArmR = 0.75 * w;
+    p.lElb = -0.95 * w;
+    p.rArmP = 0.95 * w;
+    p.rArmR = -0.35 * w;
+    p.rElb = -0.40 * w;
   }
 
   _poseLadder(p, s) {

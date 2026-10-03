@@ -63,6 +63,17 @@ export const CONFIG = {
     staminaRegenDelay: 0.7,
     exhaustedRecover: 22,   // stamina needed before sprinting again
 
+    // --- slide (sprint + crouch) ---
+    slideMinSpeed: 5.40,    // must already be running this fast to slide
+    slideBoost: 1.12,       // entry speed multiplier
+    slideFriction: 6.00,    // m/s^2 bled off while sliding
+    slideSteer: 2.20,       // rad/s of steering authority mid-slide
+    slideMinTime: 0.22,
+    slideMaxTime: 0.85,
+    slideExitSpeed: 2.80,   // drop below this and you stand back up
+    slideCost: 9,           // stamina
+    slideCooldown: 0.60,
+
     // --- parkour thresholds (relative to foot height) ---
     stepHeight: 0.45,       // walked over automatically
     vaultMinHeight: 0.45,
@@ -116,6 +127,7 @@ export const CONFIG = {
     aimHeight: 1.60,
     sprintDistance: 5.9,
     crouchDistance: 4.2,
+    slideDistance: 5.6,
     vehicleDistance: 8.4,
     vehicleHeight: 2.4,
     lookAhead: 0.28,        // leads the camera in the direction of travel

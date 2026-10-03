@@ -74,6 +74,8 @@ export class Player {
     this.hardLand = false;
     this.lastFallSpeed = 0;
     this.crouchToggled = false;
+    this.slideT = 0;
+    this.slideCooldownT = 0;
 
     // --- speed / stamina ---
     this.speed = 0;
@@ -156,6 +158,7 @@ export class Player {
       case 'vault':
       case 'mantle': this._updateScripted(dt); break;
       case 'ladder': this._updateLadder(dt, ctx); break;
+      case 'slide': this._updateSlide(dt, ctx); break;
       case 'ko': this._updateKO(dt); break;
       default: this._updateGround(dt, ctx); break;
     }
@@ -171,6 +174,7 @@ export class Player {
     if (this.landT > 0) this.landT = Math.max(0, this.landT - dt / P.landRecovery);
     if (this.flinch > 0) this.flinch = Math.max(0, this.flinch - dt * 2.6);
     if (this.ladderCooldown > 0) this.ladderCooldown -= dt;
+    if (this.slideCooldownT > 0) this.slideCooldownT -= dt;
     if (this.staminaDelay > 0) this.staminaDelay -= dt;
   }
 
@@ -183,6 +187,15 @@ export class Player {
     const blocked = !!ctx.blockInput;
     const move = blocked ? { x: 0, z: 0 } : input.move;
     const mag = Math.min(1, Math.hypot(move.x, move.z));
+
+    // Crouching at speed turns into a slide instead of a crouch-walk.
+    if (!blocked && this.grounded && this.motion === 'ground' && this.slideCooldownT <= 0 &&
+        this.speed >= P.slideMinSpeed && this.stance === 'stand' && !this.aiming &&
+        !this.attack.active && this.state.stamina > P.slideCost &&
+        (input.pressed('crouch') || input.pressed('crouchToggle'))) {
+      this._startSlide();
+      return;
+    }
 
     this._updateStance(dt, input, blocked);
     this._updateAim(dt, input, ctx, blocked);
@@ -402,6 +415,119 @@ export class Player {
     let damage = 0;
     if (speed > P.fallDamageSpeed) damage = Math.round((speed - P.fallDamageSpeed) * P.fallDamageScale);
     this.onEvent('land', { speed, hard: this.hardLand, damage });
+  }
+
+  // =========================================================================
+  // Slide
+  // =========================================================================
+
+  _startSlide() {
+    const sp = Math.max(0.001, Math.hypot(this.vel.x, this.vel.z));
+    const boost = Math.min(P.sprintSpeed * 1.25, sp * P.slideBoost);
+    this.rot = Math.atan2(this.vel.x / sp, this.vel.z / sp);
+    this.vel.x = Math.sin(this.rot) * boost;
+    this.vel.z = Math.cos(this.rot) * boost;
+    this.motion = 'slide';
+    this.slideT = 0;
+    this.sprinting = false;
+    this.stance = 'crouch';
+    this.targetHeight = P.crouchHeight;
+    this.height = P.crouchHeight;       // drop the capsule at once so gaps are usable
+    this.crouchToggled = false;
+    this.state.stamina = Math.max(0, this.state.stamina - P.slideCost);
+    this.staminaDelay = P.staminaRegenDelay;
+    this.onEvent('slide-start', { speed: boost });
+  }
+
+  _updateSlide(dt, ctx) {
+    const input = ctx.input;
+    const blocked = !!ctx.blockInput;
+    const world = this.world;
+    this.slideT += dt;
+
+    // The capsule drops fast so you can slip under low obstacles immediately.
+    this.targetHeight = P.crouchHeight;
+    const hk = 1 - Math.exp(-22 * dt);
+    this.height += (this.targetHeight - this.height) * hk;
+
+    // ---- limited steering -------------------------------------------------
+    const move = blocked ? { x: 0, z: 0 } : input.move;
+    const camYaw = ctx.camYaw || 0;
+    const fx = Math.sin(camYaw), fz = Math.cos(camYaw);
+    const rx = -Math.cos(camYaw), rz = Math.sin(camYaw);
+    const dx = fx * -move.z + rx * move.x;
+    const dz = fz * -move.z + rz * move.x;
+    if (Math.hypot(dx, dz) > 1e-4) {
+      const delta = shortestAngle(this.rot, Math.atan2(dx, dz));
+      const step = Math.sign(delta) * Math.min(Math.abs(delta), P.slideSteer * dt);
+      this.rot += step;
+      this.turnRate = step / Math.max(dt, 1e-4);
+    } else {
+      this.turnRate = 0;
+    }
+
+    // ---- friction ---------------------------------------------------------
+    let sp = Math.max(0, Math.hypot(this.vel.x, this.vel.z) - P.slideFriction * dt);
+    this.vel.x = Math.sin(this.rot) * sp;
+    this.vel.z = Math.cos(this.rot) * sp;
+    this.vel.y = Math.max(-P.maxFallSpeed, this.vel.y - P.gravity * dt);
+
+    // ---- integrate --------------------------------------------------------
+    const prevY = this.pos.y;
+    const wasGrounded = this.grounded;
+    let wallHit = false;
+    if (world) {
+      const hres = world.moveXZ(this.pos, this.vel.x * dt, this.vel.z * dt,
+        this.radius, this.height, P.stepHeight);
+      if (hres.hit) {
+        if (hres.nx !== 0) this.vel.x = 0;
+        if (hres.nz !== 0) this.vel.z = 0;
+        wallHit = Math.hypot(this.vel.x, this.vel.z) < sp * 0.4;
+      }
+      this.pos.y += this.vel.y * dt;
+      const probeY = Math.max(prevY, this.pos.y);
+      const support = world.groundAt(this.pos.x, this.pos.z, probeY, this.radius, 0.02);
+      const snapDist = (wasGrounded && this.vel.y <= 0.02) ? 0.42 : 0;
+      if (this.pos.y <= support.y + 1e-3) this._land(support, -this.vel.y);
+      else if (snapDist > 0 && this.pos.y - support.y <= snapDist) {
+        this.pos.y = support.y; this.vel.y = 0; this.grounded = true; this.groundBox = support.box;
+      } else {
+        if (this.grounded) this.coyoteT = P.coyoteTime;
+        this.grounded = false;
+      }
+      world.depenetrate(this.pos, this.radius, this.height);
+    } else {
+      this.pos.x += this.vel.x * dt;
+      this.pos.z += this.vel.z * dt;
+      this.pos.y += this.vel.y * dt;
+      if (this.pos.y <= 0) this._land({ y: 0, box: null }, -this.vel.y);
+    }
+
+    sp = Math.hypot(this.vel.x, this.vel.z);
+    this.speed = sp;
+    this.speedNorm = Math.min(1.2, sp / P.sprintSpeed);
+    if (!this.grounded) { this.airTime += dt; this.lastFallSpeed = Math.max(this.lastFallSpeed, -this.vel.y); }
+    else { this.airTime = 0; this.lastGroundY = this.pos.y; }
+
+    // ---- exit conditions --------------------------------------------------
+    const jumped = !blocked && input.pressed('jump');
+    const tooSlow = sp < P.slideExitSpeed && this.slideT > P.slideMinTime;
+    if (jumped || wallHit || tooSlow || this.slideT >= P.slideMaxTime ||
+        (!this.grounded && this.airTime > 0.18)) {
+      this._endSlide(input, blocked, jumped);
+    }
+  }
+
+  _endSlide(input, blocked, jumped) {
+    this.motion = 'ground';
+    this.slideCooldownT = P.slideCooldown;
+    this.slideT = 0;
+    // Stand back up unless the player is still holding crouch or a ceiling
+    // (a pipe, a vent, a car) keeps them down.
+    const holdCrouch = !blocked && input && input.down('crouch');
+    if (!holdCrouch) this._tryStand();
+    if (jumped) this.jumpBufferT = P.jumpBufferTime;
+    this.onEvent('slide-end', { crouched: this.stance === 'crouch' });
   }
 
   // =========================================================================
@@ -815,6 +941,7 @@ export class Player {
       aimPitch: -(ctx.camPitch || 0),
       attack: this.attack,
       climbT: this.scriptedProgress || 0,
+      slideT: this.slideT,
       ladderSpeed: this.ladderSpeedNorm || 0,
       flinch: this.flinch,
       koT: this.koT,
@@ -827,6 +954,7 @@ export class Player {
   /** Compact snapshot for HUD / camera / save data. */
   describeState() {
     if (this.motion === 'vehicle') return 'DRIVING';
+    if (this.motion === 'slide') return 'SLIDING';
     if (this.motion === 'ladder') return 'CLIMBING';
     if (this.motion === 'mantle') return 'CLIMBING';
     if (this.motion === 'vault') return 'VAULTING';

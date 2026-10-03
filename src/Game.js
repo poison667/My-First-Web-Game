@@ -278,6 +278,14 @@ export class Game {
       case 'vault-end':
         this.audio.footstep(0.8, false);
         break;
+      case 'slide-start':
+        this.audio.slide();
+        this.camCtrl.addDip(0.16);
+        this.camCtrl.addShake(0.08, 0.3);
+        break;
+      case 'slide-end':
+        this.audio.footstep(0.6, data.crouched);
+        break;
       case 'ladder-enter':
         this.ui.notify('On the ladder — W/S to climb, Space to drop off', '');
         break;
@@ -526,6 +534,7 @@ export class Game {
       let mode = 'normal';
       if (this.player.aiming) mode = 'aim';
       else if (this.player.motion === 'ladder' || this.player.isBusy()) mode = 'climb';
+      else if (this.player.motion === 'slide') mode = 'slide';
       else if (this.player.stance === 'crouch') mode = 'crouch';
       else if (this.player.sprinting && this.player.speed > 4.5) mode = 'sprint';
 

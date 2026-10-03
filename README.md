@@ -49,8 +49,10 @@ Then **click the game screen** to lock the mouse and start playing.
 | Sprint | `Shift` (uses stamina) |
 | Walk (slow, quiet) | `Alt` |
 | Crouch | `Ctrl` (hold) or `C` (toggle) |
+| Slide | `Ctrl` while sprinting — fits under pipes and barriers |
 | Jump | `Space` |
 | Vault / climb a ledge | `Space` facing the obstacle — or just run into low cover |
+| Jump out of a slide | `Space` mid‑slide |
 | Climb a ladder | `E` at the ladder, `W`/`S` to move, `Space` to drop off |
 
 **Camera**
@@ -84,7 +86,7 @@ draw/holster, `RB` enter/exit vehicle, `LT` aim, `RT` fire, `L3` sprint,
 
 The strip at the bottom of the screen always shows what the character is doing
 (`IDLE`, `WALKING`, `RUNNING`, `SPRINTING`, `CROUCHED`, `SNEAKING`, `JUMPING`,
-`FALLING`, `VAULTING`, `CLIMBING`, `AIMING`, `DRIVING`) and turns red when you
+`FALLING`, `SLIDING`, `VAULTING`, `CLIMBING`, `AIMING`, `DRIVING`) and turns red when you
 are out of breath. The one‑line key reminder under it fades out after a minute —
 the full list lives in the pause menu.
 
@@ -199,7 +201,7 @@ The character controller is the core of the game feel, so it is built as a small
 state machine (`src/entities/Player.js`) over a custom AABB collision world
 (`src/systems/Physics.js`) — no physics engine, no animation files.
 
-**Motion states:** `ground` · `air` · `vault` · `mantle` · `ladder` · `vehicle` · `ko`
+**Motion states:** `ground` · `air` · `slide` · `vault` · `mantle` · `ladder` · `vehicle` · `ko`
 
 **What makes it feel responsive**
 
@@ -209,6 +211,10 @@ state machine (`src/entities/Player.js`) over a custom AABB collision world
 - **Jump feel** — variable height (hold for higher), *coyote time* (you can
   still jump a moment after walking off a ledge) and *input buffering* (a jump
   pressed just before you land still fires).
+- **Sprint slide** — crouching at speed converts momentum into a slide that
+  keeps the capsule low (so you can go under pipes and barriers a standing
+  character cannot pass), bleeds speed with friction, can be steered a little,
+  can be jumped out of, and leaves you crouched if you stop under something.
 - **Contextual climbing** — every frame the controller probes the obstacle in
   front of you and classifies it: kerbs and steps are absorbed automatically,
   waist‑high cover is **vaulted** (and auto‑vaulted when you are sprinting),
@@ -240,11 +246,11 @@ npm install     # dev-only: three + jsdom, for the headless tests
 npm test
 ```
 
-74 assertions run in Node with no browser and no GPU:
+83 assertions run in Node with no browser and no GPU:
 
 - `npm run test:controller` — speed tiers, crouch under ceilings, jump feel,
-  wall sliding, step‑ups, vaulting, mantling, ladders, melee combos, aiming,
-  camera collision and interaction scoring.
+  sliding, wall sliding, step‑ups, vaulting, mantling, ladders, melee combos,
+  aiming, camera collision and interaction scoring.
 - `npm run test:world` — builds the actual town and verifies every collider,
   that every ladder can be climbed to a real roof, and that every door has
   somewhere to stand.
@@ -252,7 +258,8 @@ npm test
   on: DOM ids, UI methods, UI hooks, `CONFIG` paths, input actions, events.
 - `npm run test:boot` — boots the **real game** inside jsdom with a stubbed
   renderer and plays it with synthetic input: walking, sprinting, crouching,
-  jumping, shooting, driving, entering buildings, climbing a ladder, saving.
+  jumping, sliding, shooting, driving, entering buildings, climbing a ladder,
+  saving.
 
 ---
 
@@ -275,7 +282,7 @@ The architecture is built to grow without rewrites. Most content is data:
 - **Phase 2 ✔** Full explorable town, interiors, interaction & NPC framework.
 - **Phase 3 ✔** Combat, vehicles, economy, inventory, reputation, relationships, factions.
 - **Phase 4 ✔** Mission framework + both storylines’ arcs playable end‑to‑end.
-- **Phase 5 ✔** Professional third‑person controller: speed tiers, crouch,
+- **Phase 5 ✔** Professional third‑person controller: speed tiers, crouch, slide,
   contextual vault/mantle/ladder climbing, melee combos, firearms with aiming,
   vehicles, spring‑arm camera, procedural animation — all covered by a headless
   test suite.

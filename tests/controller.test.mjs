@@ -214,6 +214,128 @@ test('jump input is buffered just before landing', () => {
   assert(p.vel.y > 2 || !p.grounded, 'buffered jump fired on landing');
 });
 
+console.log('\nSlide');
+
+/** Sprint forward until at full speed, then tap crouch. */
+function sprintThenSlide(world, seconds = 1.4) {
+  const p = makePlayer(world);
+  const input = new FakeInput();
+  input.move = { ...FWD };
+  input.hold('sprint');
+  sim(p, input, seconds);
+  input.tap('crouch');
+  input.hold('crouch');
+  p.update(1 / 60, { input, camYaw: Math.PI, camPitch: 0 });
+  return { p, input };
+}
+
+test('crouching at sprint speed starts a slide', () => {
+  const { p } = sprintThenSlide(makeWorld());
+  assert(p.motion === 'slide', `motion is ${p.motion}`);
+  assert(p.speed > CONFIG.player.sprintSpeed * 0.9, `keeps momentum (${p.speed.toFixed(2)} m/s)`);
+  assert(p.describeState() === 'SLIDING', 'HUD readout');
+  assert(Math.abs(p.height - CONFIG.player.crouchHeight) < 0.3, 'capsule drops immediately');
+});
+
+test('a slide decays, covers ground and ends on its own', () => {
+  const { p, input } = sprintThenSlide(makeWorld());
+  const z0 = p.pos.z;
+  input.hold('crouch', false);
+  let t = 0;
+  while (p.motion === 'slide' && t < 3) { p.update(1 / 60, { input, camYaw: Math.PI, camPitch: 0 }); t += 1 / 60; }
+  const travelled = z0 - p.pos.z;
+  assert(p.motion === 'ground', `slide ended (motion ${p.motion})`);
+  assert(t < 1.2, `slide lasted ${t.toFixed(2)}s`);
+  assert(travelled > 2.5 && travelled < 7.5, `slid ${travelled.toFixed(2)}m`);
+  sim(p, input, 0.3);
+  assert(p.stance === 'stand', 'stands back up when the key is released');
+});
+
+test('crouching from a standstill does not slide', () => {
+  const p = makePlayer(makeWorld());
+  const input = new FakeInput();
+  input.tap('crouch');
+  input.hold('crouch');
+  sim(p, input, 0.3);
+  assert(p.motion === 'ground' && p.stance === 'crouch', `plain crouch (${p.motion}/${p.stance})`);
+});
+
+/** Sprint forward until the player passes `z`, then return the rig. */
+function sprintTo(world, z) {
+  const p = makePlayer(world);
+  const input = new FakeInput();
+  input.move = { ...FWD };
+  input.hold('sprint');
+  for (let f = 0; f < 60 * 10 && p.pos.z > z; f++) {
+    p.update(1 / 60, { input, camYaw: Math.PI, camPitch: 0 });
+  }
+  return { p, input };
+}
+
+test('a slide fits under a gap a standing player cannot pass', () => {
+  // A pipe from 1.30 to 2.60 across the corridor at z = [-16,-14]
+  const world = makeWorld([makeBox(0, -15, 10, 2, { minY: 1.3, maxY: 2.6 })]);
+
+  const standing = sprintTo(world, -40).p;        // runs until it is stopped
+  assert(standing.pos.z > -14.1, `standing player is stopped by the pipe (z=${standing.pos.z.toFixed(2)})`);
+
+  const { p, input } = sprintTo(world, -11);      // at full speed, 3m short
+  assert(p.speed > CONFIG.player.slideMinSpeed, 'arrives at sprint speed');
+  input.tap('crouch'); input.hold('crouch');
+  sim(p, input, 1.6);
+  assert(p.pos.z < -15, `slid under the pipe to z=${p.pos.z.toFixed(2)}`);
+});
+
+test('a slide that ends under a ceiling stays crouched', () => {
+  const world = makeWorld([makeBox(0, -16, 12, 12, { minY: 1.3, maxY: 2.6 })]);
+  const { p, input } = sprintTo(world, -8);
+  input.tap('crouch');
+  sim(p, input, 2.0);
+  assert(p.motion === 'ground', 'slide finished');
+  assert(p.pos.z < -10.5, `ended up under the slab (z=${p.pos.z.toFixed(2)})`);
+  assert(p.stance === 'crouch', 'no headroom, so the player stays down');
+});
+
+test('slides cannot be chained back to back', () => {
+  const { p, input } = sprintThenSlide(makeWorld());
+  input.hold('crouch', false);
+  while (p.motion === 'slide') p.update(1 / 60, { input, camYaw: Math.PI, camPitch: 0 });
+  assert(p.slideCooldownT > 0, 'a cooldown starts when the slide ends');
+
+  // Even at full speed the next slide is refused until the cooldown expires.
+  p.vel.set(0, 0, -CONFIG.player.sprintSpeed); p.speed = CONFIG.player.sprintSpeed;
+  input.tap('crouch'); input.hold('crouch');
+  p.update(1 / 60, { input, camYaw: Math.PI, camPitch: 0 });
+  assert(p.motion !== 'slide', 'cooldown blocks an instant second slide');
+
+  input.hold('crouch', false);
+  sim(p, input, CONFIG.player.slideCooldown + 0.1);
+  p.vel.set(0, 0, -CONFIG.player.sprintSpeed); p.speed = CONFIG.player.sprintSpeed;
+  p.stance = 'stand'; p.state.stamina = 100;
+  input.tap('crouch'); input.hold('crouch');
+  p.update(1 / 60, { input, camYaw: Math.PI, camPitch: 0 });
+  assert(p.motion === 'slide', 'slides again once the cooldown has passed');
+});
+
+test('jumping out of a slide launches the player', () => {
+  const { p, input } = sprintThenSlide(makeWorld());
+  sim(p, input, 0.25);
+  input.hold('crouch', false);
+  input.tap('jump'); input.hold('jump');
+  sim(p, input, 0.2);
+  assert(p.vel.y > 2.5 || !p.grounded, `slide-jump fired (vy=${p.vel.y.toFixed(2)})`);
+});
+
+test('sliding costs stamina and emits start/end events', () => {
+  const p0 = makePlayer(makeWorld());
+  const { p, input } = sprintThenSlide(makeWorld());
+  assert(p.events.some(e => e.type === 'slide-start'), 'slide-start');
+  input.hold('crouch', false);
+  sim(p, input, 1.6);
+  assert(p.events.some(e => e.type === 'slide-end'), 'slide-end');
+  assert(p.state.stamina < p0.state.stamina, 'stamina spent');
+});
+
 console.log('\nCollision');
 
 test('walls block movement', () => {

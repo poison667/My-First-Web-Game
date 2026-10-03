@@ -23,6 +23,7 @@ const MODES = {
   aim:     { dist: C.aimDistance,     height: C.aimHeight,     shoulder: C.aimShoulder,  fov: C.fovAim,     lag: C.followLag * 1.6, rotLag: C.rotateLag * 1.2 },
   vehicle: { dist: C.vehicleDistance, height: C.vehicleHeight, shoulder: 0,              fov: C.fovVehicle, lag: C.followLag * 0.55, rotLag: C.rotateLag * 0.7 },
   climb:   { dist: C.distance * 0.8,  height: C.height + 0.2,  shoulder: C.shoulder * 1.3, fov: C.fov + 2,  lag: C.followLag * 0.9, rotLag: C.rotateLag },
+  slide:   { dist: C.slideDistance,   height: C.crouchHeight - 0.08, shoulder: C.shoulder * 0.9, fov: C.fovSprint - 1, lag: C.followLag * 0.7, rotLag: C.rotateLag * 0.9 },
 };
 
 const expSmooth = (k, dt) => 1 - Math.exp(-k * dt);
