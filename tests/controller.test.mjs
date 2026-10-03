@@ -444,6 +444,100 @@ test('ladder climbing raises the player and tops out', () => {
   assert(p.events.some(e => e.type === 'mantle'), 'auto-mantled over the lip');
 });
 
+console.log('\nLedge hang');
+
+/** Drop the player down the face of a tall wall so they fall past its lip. */
+function fallPastLedge(topY = 4.0) {
+  // wall occupies x [-4,4], z [-6,-2]; the player falls just in front of it
+  const world = makeWorld([makeBox(0, -4, 8, 4, { maxY: topY })]);
+  const p = makePlayer(world, { x: 0, y: topY - 1.4, z: -1.2 });
+  const input = new FakeInput();
+  input.move = { ...FWD };                  // drift into the wall while falling
+  for (let f = 0; f < 60 * 3 && p.motion !== 'hang' && p.pos.y > -2; f++) {
+    p.update(1 / 60, { input, camYaw: Math.PI, camPitch: 0 });
+  }
+  return { p, input, world, topY };
+}
+
+test('falling past a high lip catches it instead of dropping', () => {
+  const { p, topY } = fallPastLedge();
+  assert(p.motion === 'hang', `motion is ${p.motion}`);
+  assert(Math.abs(p.pos.y - (topY - CONFIG.player.hangDrop)) < 0.05,
+    `hanging just below the lip (y=${p.pos.y.toFixed(2)}, lip ${topY})`);
+  assert(p.describeState() === 'HANGING', 'HUD readout');
+  assert(p.events.some(e => e.type === 'ledge-grab'), 'ledge-grab event');
+});
+
+test('a hang is stable and absorbs the fall', () => {
+  const { p, input } = fallPastLedge();
+  const y = p.pos.y;
+  input.move = { x: 0, z: 0 };
+  sim(p, input, 1.0);
+  assert(p.motion === 'hang', 'still hanging');
+  assert(Math.abs(p.pos.y - y) < 0.05, 'does not sag');
+  assert(!p.events.some(e => e.type === 'land' && e.data.damage > 0), 'no fall damage from the catch');
+});
+
+test('pressing up from a hang climbs onto the roof', () => {
+  const { p, input, topY } = fallPastLedge();
+  input.move = { x: 0, z: 0 };
+  input.tap('jump');
+  for (let f = 0; f < 60 * 3 && p.motion !== 'ground'; f++) {
+    p.update(1 / 60, { input, camYaw: Math.PI, camPitch: 0 });
+  }
+  sim(p, input, 0.2);
+  assert(Math.abs(p.pos.y - topY) < 0.1, `standing on the roof (y=${p.pos.y.toFixed(2)})`);
+  assert(p.grounded, 'grounded on top');
+});
+
+test('dropping from a hang falls without an instant re-grab', () => {
+  const { p, input } = fallPastLedge();
+  input.move = { x: 0, z: 0 };
+  input.tap('crouch');
+  p.update(1 / 60, { input, camYaw: Math.PI, camPitch: 0 });
+  assert(p.motion === 'ground', 'let go');
+  assert(p.hangCooldownT > 0, 'a cooldown blocks re-grabbing');
+  sim(p, input, 0.3);
+  assert(p.motion !== 'hang', 'did not snap straight back onto the ledge');
+  sim(p, input, 2.0);
+  assert(p.grounded && p.pos.y < 0.1, `landed on the ground (y=${p.pos.y.toFixed(2)})`);
+});
+
+test('shimmying slides along the ledge and stops at its end', () => {
+  const { p, input } = fallPastLedge();
+  const x0 = p.pos.x;
+  input.move = { x: 1, z: 0 };               // shimmy right
+  sim(p, input, 1.0);
+  assert(p.motion === 'hang', 'still hanging while shimmying');
+  const moved = p.pos.x - x0;
+  assert(moved > 0.6, `shimmied ${moved.toFixed(2)}m`);
+  assert(p.describeState() === 'SHIMMYING', 'HUD readout');
+  sim(p, input, 4.0);                        // keep going, off the end of the 8m wall
+  assert(p.pos.x > 3.2 && p.pos.x < 4.6, `stopped at the corner (x=${p.pos.x.toFixed(2)})`);
+  assert(p.motion === 'hang', 'still holding on at the corner');
+});
+
+test('hanging drains stamina and eventually drops the player', () => {
+  const { p, input } = fallPastLedge();
+  input.move = { x: 0, z: 0 };
+  p.state.stamina = 2;
+  sim(p, input, 0.8);
+  assert(p.motion !== 'hang', 'tired arms let go');
+});
+
+test('low lips are still mantled instantly while falling', () => {
+  const world = makeWorld([makeBox(0, -4, 8, 4, { maxY: 1.6 })]);
+  const p = makePlayer(world, { x: 0, y: 1.2, z: -1.2 });
+  const input = new FakeInput();
+  input.move = { ...FWD };
+  for (let f = 0; f < 60 * 3 && p.motion !== 'ground'; f++) {
+    p.update(1 / 60, { input, camYaw: Math.PI, camPitch: 0 });
+  }
+  sim(p, input, 0.3);
+  assert(!p.events.some(e => e.type === 'ledge-grab'), 'no hang on a low ledge');
+  assert(p.events.some(e => e.type === 'mantle') || p.pos.y > 1.5, 'went straight up');
+});
+
 console.log('\nCombat');
 
 test('melee combo advances and strikes exactly once per swing', () => {

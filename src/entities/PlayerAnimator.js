@@ -191,6 +191,7 @@ export class PlayerAnimator {
     else if (s.motion === 'vault') this._poseVault(p, s);
     else if (s.motion === 'mantle') this._poseMantle(p, s);
     else if (s.motion === 'slide') this._poseSlide(p, s);
+    else if (s.motion === 'hang') this._poseHang(p, s);
     else if (!s.grounded) this._poseAir(p, s);
     else if (s.stance === 'crouch') this._poseCrouch(p, s, speedNorm);
     else this._poseLocomotion(p, s, speedNorm);
@@ -460,6 +461,36 @@ export class PlayerAnimator {
     p.rArmP = 0.95 * w;
     p.rArmR = -0.35 * w;
     p.rElb = -0.40 * w;
+  }
+
+  /** Hanging from a lip: arms overhead, body long, legs swinging gently. */
+  _poseHang(p, s) {
+    const grab = clamp((s.hangT ?? 0) / 0.22, 0, 1);
+    const sway = Math.sin(this.t * 1.6) * 0.06 * (1 - Math.abs(s.shimmyDir ?? 0));
+    const sh = s.shimmyDir ?? 0;
+    const reach = sh !== 0 ? Math.sin(this.t * 7) : 0;      // alternating hands
+
+    p.lArmP = -2.72 + (sh > 0 ? reach * 0.22 : 0);
+    p.rArmP = -2.72 + (sh < 0 ? -reach * 0.22 : 0);
+    p.lArmR = 0.16 - sh * 0.1;
+    p.rArmR = -0.16 - sh * 0.1;
+    p.lElb = -0.18 - Math.max(0, reach) * 0.25;
+    p.rElb = -0.18 - Math.max(0, -reach) * 0.25;
+
+    p.spinePitch = 0.06 * grab + sway * 0.4;
+    p.spineRoll = sh * 0.09 + sway * 0.5;
+    p.chestPitch = 0.04;
+    p.neckPitch = -0.22 * grab;                             // looking up at the lip
+    p.hipsY = -0.05 * grab;
+    p.hipsRoll = sh * 0.12 + sway;
+    p.hipsYaw = sh * 0.08;
+
+    // legs dangle, the inside leg tucks up slightly while shimmying
+    p.lThighP = -0.28 + sway * 0.6 + (sh > 0 ? -0.22 : 0);
+    p.rThighP = -0.18 - sway * 0.6 + (sh < 0 ? -0.22 : 0);
+    p.lKnee = 0.42 + (sh > 0 ? 0.5 : 0.12);
+    p.rKnee = 0.30 + (sh < 0 ? 0.5 : 0.12);
+    p.lFootP = -0.12; p.rFootP = -0.12;
   }
 
   _poseLadder(p, s) {

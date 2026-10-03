@@ -76,6 +76,10 @@ export class Player {
     this.crouchToggled = false;
     this.slideT = 0;
     this.slideCooldownT = 0;
+    this.hang = null;           // {top, dirX, dirZ, box}
+    this.hangT = 0;
+    this.hangCooldownT = 0;
+    this.shimmyDir = 0;
 
     // --- speed / stamina ---
     this.speed = 0;
@@ -133,7 +137,7 @@ export class Player {
     return new THREE.Vector3(this.pos.x, this.pos.y + h, this.pos.z);
   }
   centerPosition() { return new THREE.Vector3(this.pos.x, this.pos.y + this.height * 0.55, this.pos.z); }
-  isBusy() { return this.motion === 'vault' || this.motion === 'mantle'; }
+  isBusy() { return this.motion === 'vault' || this.motion === 'mantle' || this.motion === 'hang'; }
   canAct() { return this.motion === 'ground' || this.motion === 'ladder'; }
 
   setWeapon(kind, drawn = true) {
@@ -159,6 +163,7 @@ export class Player {
       case 'mantle': this._updateScripted(dt); break;
       case 'ladder': this._updateLadder(dt, ctx); break;
       case 'slide': this._updateSlide(dt, ctx); break;
+      case 'hang': this._updateHang(dt, ctx); break;
       case 'ko': this._updateKO(dt); break;
       default: this._updateGround(dt, ctx); break;
     }
@@ -175,6 +180,7 @@ export class Player {
     if (this.flinch > 0) this.flinch = Math.max(0, this.flinch - dt * 2.6);
     if (this.ladderCooldown > 0) this.ladderCooldown -= dt;
     if (this.slideCooldownT > 0) this.slideCooldownT -= dt;
+    if (this.hangCooldownT > 0) this.hangCooldownT -= dt;
     if (this.staminaDelay > 0) this.staminaDelay -= dt;
   }
 
@@ -366,8 +372,10 @@ export class Player {
       this.airTime += dt;
       this.coyoteT = Math.max(0, this.coyoteT - dt);
       this.lastFallSpeed = Math.max(this.lastFallSpeed, -this.vel.y);
-      // Ledge grab while falling next to a climbable surface.
-      if (this.vel.y < -1 && this.airTime > 0.12) this._tryParkour(false, true);
+      // Falling past a climbable surface: catch the lip, or mantle a low one.
+      if (this.vel.y < -1 && this.airTime > 0.12 && this.hangCooldownT <= 0) {
+        if (!this._tryLedgeGrab()) this._tryParkour(false, true);
+      }
     } else {
       this.airTime = 0;
       this.coyoteT = P.coyoteTime;
@@ -725,6 +733,170 @@ export class Player {
   }
 
   // =========================================================================
+  // Ledge hang + shimmy
+  // =========================================================================
+
+  /**
+   * Catch a ledge that is too high to mantle straight onto while falling past
+   * it. Returns true when the player latches on.
+   */
+  _tryLedgeGrab() {
+    const world = this.world;
+    if (!world || this.motion !== 'ground' || this.grounded) return false;
+    if (this.stance === 'crouch') return false;
+
+    const dir = this._tmpDir;
+    let dx = dir.x, dz = dir.z;
+    if (Math.abs(dx) + Math.abs(dz) < 1e-4) { const f = this.forward(); dx = f.x; dz = f.z; }
+
+    const probe = world.probeAhead(this.pos, dx, dz, this.radius, this.height, P.ledgeReach + this.radius);
+    if (!probe || probe.dist > P.ledgeReach) return false;
+
+    const box = probe.box;
+    if (box.climb === false) return false;
+    const rel = probe.top - this.pos.y;                // lip height above the feet
+    if (rel < P.hangMinHeight || rel > P.hangMaxHeight) return false;
+
+    // There must be somewhere to end up: free space over the lip.
+    const onTop = probe.dist + this.radius + 0.42;
+    if (!world.isFree(this.pos.x + dx * onTop, probe.top + 0.06, this.pos.z + dz * onTop, this.radius, P.crouchHeight)) {
+      return false;
+    }
+    this._startHang(probe.top, dx, dz, box, probe.dist + this.radius);
+    return true;
+  }
+
+  _startHang(top, dx, dz, box, faceDist = P.hangReach) {
+    this.motion = 'hang';
+    this.hang = { top, dirX: dx, dirZ: dz, box };
+    this.hangT = 0;
+    this.shimmyDir = 0;
+    this.vel.set(0, 0, 0);
+    this.pos.y = top - P.hangDrop;
+    // settle at a fixed reach from the wall so the hands sit on the lip
+    const pull = faceDist - P.hangReach;
+    if (Math.abs(pull) > 0.01) { this.pos.x += dx * pull; this.pos.z += dz * pull; }
+    this.rot = Math.atan2(dx, dz);
+    this.grounded = false;
+    this.aiming = false;
+    this.attack.active = false;
+    this.airTime = 0;
+    this.lastFallSpeed = 0;         // the catch absorbs the fall
+    this.stance = 'stand';
+    this.targetHeight = P.height;
+    this.onEvent('ledge-grab', { top });
+  }
+
+  /** Let go. `push` kicks the player away from the wall. */
+  releaseHang(push = false) {
+    const h = this.hang;
+    this.motion = 'ground';
+    this.hang = null;
+    this.hangCooldownT = P.hangCooldown;
+    this.grounded = false;
+    this.airTime = 0.001;
+    this.lastFallSpeed = 0;
+    if (push && h) this.vel.set(-h.dirX * 2.0, 1.2, -h.dirZ * 2.0);
+    else this.vel.set(0, -0.5, 0);
+    this.onEvent('ledge-release', {});
+  }
+
+  /** Climb from a hang onto the surface above. */
+  mantleFromHang() {
+    const world = this.world, h = this.hang;
+    if (!world || !h) return false;
+    if (this.state.stamina < 6) { this.onEvent('too-tired', {}); return false; }
+
+    const probe = world.probeAhead(this.pos, h.dirX, h.dirZ, this.radius, this.height, P.ledgeReach + this.radius);
+    const top = probe ? probe.top : h.top;
+    const near = probe ? probe.dist : 0.35;
+    const far = probe ? world.depthAlong(probe.box, this.pos, h.dirX, h.dirZ) : near + 1.2;
+    const onTop = Math.min(near + this.radius + 0.42, Math.max(far - this.radius - 0.05, near + 0.1));
+    const tx = this.pos.x + h.dirX * onTop;
+    const tz = this.pos.z + h.dirZ * onTop;
+    if (!world.isFree(tx, top + 0.06, tz, this.radius, P.height)) return false;
+
+    this.hang = null;
+    this._startScripted('mantle', h.dirX, h.dirZ,
+      new THREE.Vector3(tx, top, tz),
+      new THREE.Vector3(this.pos.x + h.dirX * 0.1, top + 0.12, this.pos.z + h.dirZ * 0.1),
+      P.mantleDuration * 0.75);
+    this.state.stamina = Math.max(0, this.state.stamina - P.hangMantleCost);
+    this.staminaDelay = P.staminaRegenDelay;
+    return true;
+  }
+
+  _updateHang(dt, ctx) {
+    const h = this.hang;
+    if (!h) { this.motion = 'ground'; return; }
+    const input = ctx.input;
+    const blocked = !!ctx.blockInput;
+    const move = blocked ? { x: 0, z: 0 } : input.move;
+    const world = this.world;
+    this.hangT += dt;
+    this.speed = 0;
+    this.speedNorm = 0;
+
+    // ---- stamina ----------------------------------------------------------
+    this.state.stamina = Math.max(0, this.state.stamina - P.hangDrain * dt);
+    this.staminaDelay = P.staminaRegenDelay;
+    if (this.state.stamina <= 0) { this.onEvent('too-tired', {}); this.releaseHang(false); return; }
+
+    // ---- climb up / drop --------------------------------------------------
+    if (!blocked && (input.pressed('jump') || move.z < -0.55)) {
+      if (this.mantleFromHang()) return;
+    }
+    if (!blocked && (input.pressed('crouch') || input.pressed('crouchToggle') || move.z > 0.65)) {
+      this.releaseHang(true);
+      return;
+    }
+
+    // ---- shimmy -----------------------------------------------------------
+    const want = Math.abs(move.x) > 0.25 ? Math.sign(move.x) : 0;
+    this.shimmyDir = want;
+    if (want !== 0 && world) {
+      const latX = -h.dirZ * want, latZ = h.dirX * want;   // along the wall
+      const step = P.shimmySpeed * dt;
+      const nx = this.pos.x + latX * step, nz = this.pos.z + latZ * step;
+      const ahead = world.probeAhead({ x: nx, y: this.pos.y, z: nz }, h.dirX, h.dirZ,
+        this.radius, this.height, P.ledgeReach + this.radius);
+      // the hands have to stay over solid wall, so corners end the shimmy
+      const handX = nx + h.dirX * (P.hangReach + 0.12);
+      const handZ = nz + h.dirZ * (P.hangReach + 0.12);
+      const handsOnWall = !world.isFree(handX, h.top - 0.4, handZ, 0.1, 0.3);
+      const continues = handsOnWall && ahead && Math.abs(ahead.top - h.top) < 0.16 && ahead.dist <= P.ledgeReach;
+      const bodyFree = world.isFree(nx, this.pos.y + 0.1, nz, this.radius * 0.85, P.hangDrop * 0.9);
+      if (continues && bodyFree) {
+        this.pos.x = nx; this.pos.z = nz;
+        h.top = ahead.top;
+        this.speed = P.shimmySpeed;
+        this.speedNorm = 0.25;
+      } else {
+        this.shimmyDir = 0;                                  // end of the ledge
+      }
+    }
+
+    // Stay glued to the lip (ledges are not perfectly flat) and keep the
+    // body a constant arm's length from the wall.
+    this.pos.y += ((h.top - P.hangDrop) - this.pos.y) * (1 - Math.exp(-18 * dt));
+    if (world) {
+      const cur = world.probeAhead(this.pos, h.dirX, h.dirZ, this.radius, this.height, P.ledgeReach + this.radius);
+      if (cur) {
+        const err = (cur.dist + this.radius) - P.hangReach;
+        if (Math.abs(err) > 0.015) {
+          const k = 1 - Math.exp(-14 * dt);
+          this.pos.x += h.dirX * err * k;
+          this.pos.z += h.dirZ * err * k;
+        }
+        h.top = cur.top;
+      }
+    }
+    this.rot = Math.atan2(h.dirX, h.dirZ);
+    this.turnRate = 0;
+    this.height = this.targetHeight = P.height;
+  }
+
+  // =========================================================================
   // Ladders
   // =========================================================================
 
@@ -942,6 +1114,8 @@ export class Player {
       attack: this.attack,
       climbT: this.scriptedProgress || 0,
       slideT: this.slideT,
+      hangT: this.hangT,
+      shimmyDir: this.shimmyDir,
       ladderSpeed: this.ladderSpeedNorm || 0,
       flinch: this.flinch,
       koT: this.koT,
@@ -955,6 +1129,7 @@ export class Player {
   describeState() {
     if (this.motion === 'vehicle') return 'DRIVING';
     if (this.motion === 'slide') return 'SLIDING';
+    if (this.motion === 'hang') return this.shimmyDir ? 'SHIMMYING' : 'HANGING';
     if (this.motion === 'ladder') return 'CLIMBING';
     if (this.motion === 'mantle') return 'CLIMBING';
     if (this.motion === 'vault') return 'VAULTING';

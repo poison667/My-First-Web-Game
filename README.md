@@ -54,6 +54,8 @@ Then **click the game screen** to lock the mouse and start playing.
 | Vault / climb a ledge | `Space` facing the obstacle — or just run into low cover |
 | Jump out of a slide | `Space` mid‑slide |
 | Climb a ladder | `E` at the ladder, `W`/`S` to move, `Space` to drop off |
+| Catch a ledge | automatic when you fall past a lip you can reach |
+| Shimmy / climb up / let go | `A`/`D` · `Space` or `W` · `S` |
 
 **Camera**
 
@@ -86,7 +88,8 @@ draw/holster, `RB` enter/exit vehicle, `LT` aim, `RT` fire, `L3` sprint,
 
 The strip at the bottom of the screen always shows what the character is doing
 (`IDLE`, `WALKING`, `RUNNING`, `SPRINTING`, `CROUCHED`, `SNEAKING`, `JUMPING`,
-`FALLING`, `SLIDING`, `VAULTING`, `CLIMBING`, `AIMING`, `DRIVING`) and turns red when you
+`FALLING`, `SLIDING`, `VAULTING`, `CLIMBING`, `HANGING`, `SHIMMYING`, `AIMING`,
+`DRIVING`) and turns red when you
 are out of breath. The one‑line key reminder under it fades out after a minute —
 the full list lives in the pause menu.
 
@@ -201,7 +204,8 @@ The character controller is the core of the game feel, so it is built as a small
 state machine (`src/entities/Player.js`) over a custom AABB collision world
 (`src/systems/Physics.js`) — no physics engine, no animation files.
 
-**Motion states:** `ground` · `air` · `slide` · `vault` · `mantle` · `ladder` · `vehicle` · `ko`
+**Motion states:** `ground` · `air` · `slide` · `vault` · `mantle` · `hang` · `ladder` ·
+`vehicle` · `ko`
 
 **What makes it feel responsive**
 
@@ -221,6 +225,10 @@ state machine (`src/entities/Player.js`) over a custom AABB collision world
   ledges up to ~2.4 m are **mantled** if you have the stamina, ladders are
   climbed, and building walls stay unclimbable. Scripted vault/mantle arcs use
   a Bézier path so the body never clips through the geometry.
+- **Ledge hanging** — fall past a lip you can reach and the character catches
+  it instead of dropping (which also absorbs the fall). From the hang you can
+  shimmy along the wall with `A`/`D` until the ledge runs out, pull up with
+  `Space`, or let go with `S`; your arms tire, so you cannot hang forever.
 - **Natural facing** — the body turns smoothly toward where it is going, leans
   into turns and acceleration, and snaps to a strafing stance while aiming.
 - **Procedural animation** (`PlayerAnimator.js`) blends layers on a jointed rig:
@@ -246,14 +254,14 @@ npm install     # dev-only: three + jsdom, for the headless tests
 npm test
 ```
 
-83 assertions run in Node with no browser and no GPU:
+90 assertions run in Node with no browser and no GPU:
 
 - `npm run test:controller` — speed tiers, crouch under ceilings, jump feel,
-  sliding, wall sliding, step‑ups, vaulting, mantling, ladders, melee combos,
-  aiming, camera collision and interaction scoring.
+  sliding, wall sliding, step‑ups, vaulting, mantling, ledge hangs and shimmies,
+  ladders, melee combos, aiming, camera collision and interaction scoring.
 - `npm run test:world` — builds the actual town and verifies every collider,
-  that every ladder can be climbed to a real roof, and that every door has
-  somewhere to stand.
+  that every ladder can be climbed to a real roof, that rooftop lips can be
+  caught in mid‑air, and that every door has somewhere to stand.
 - `npm run test:integration` — static audit of the seams a browser would break
   on: DOM ids, UI methods, UI hooks, `CONFIG` paths, input actions, events.
 - `npm run test:boot` — boots the **real game** inside jsdom with a stubbed
@@ -283,7 +291,7 @@ The architecture is built to grow without rewrites. Most content is data:
 - **Phase 3 ✔** Combat, vehicles, economy, inventory, reputation, relationships, factions.
 - **Phase 4 ✔** Mission framework + both storylines’ arcs playable end‑to‑end.
 - **Phase 5 ✔** Professional third‑person controller: speed tiers, crouch, slide,
-  contextual vault/mantle/ladder climbing, melee combos, firearms with aiming,
+  contextual vault/mantle/hang/ladder climbing, melee combos, firearms with aiming,
   vehicles, spring‑arm camera, procedural animation — all covered by a headless
   test suite.
 - **Phase 6 ▲ ongoing** All 100 missions are defined and playable through the

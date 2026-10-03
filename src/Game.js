@@ -286,6 +286,13 @@ export class Game {
       case 'slide-end':
         this.audio.footstep(0.6, data.crouched);
         break;
+      case 'ledge-grab':
+        this.audio.climb();
+        this.camCtrl.addDip(0.12);
+        break;
+      case 'ledge-release':
+        this.audio.whoosh(0.7);
+        break;
       case 'ladder-enter':
         this.ui.notify('On the ladder — W/S to climb, Space to drop off', '');
         break;
@@ -535,6 +542,7 @@ export class Game {
       if (this.player.aiming) mode = 'aim';
       else if (this.player.motion === 'ladder' || this.player.isBusy()) mode = 'climb';
       else if (this.player.motion === 'slide') mode = 'slide';
+      else if (this.player.motion === 'hang') mode = 'climb';
       else if (this.player.stance === 'crouch') mode = 'crouch';
       else if (this.player.sprinting && this.player.speed > 4.5) mode = 'sprint';
 
@@ -572,9 +580,12 @@ export class Game {
     // ---- contextual interaction ------------------------------------------
     // Driving suppresses world prompts: the only contextual action in a car is
     // getting back out of it.
-    const found = this.interaction.update({ player: this.player, camYaw: this.camCtrl.yaw, blocked: driving });
+    const canInteract = !driving && this.player.canAct();
+    const found = this.interaction.update({ player: this.player, camYaw: this.camCtrl.yaw, blocked: !canInteract });
     if (driving) {
       this.ui.setInteract('<b>V</b> Get out · <b>Space</b> Handbrake');
+    } else if (this.player.motion === 'hang') {
+      this.ui.setInteract('<b>Space / W</b> Climb up · <b>A / D</b> Shimmy · <b>S</b> Drop');
     } else if (found) {
       this.ui.setInteract(this.interaction.prompt());
       if (this.interaction.tryTrigger(input)) { this.audio.init(); this.audio.resume(); }

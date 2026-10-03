@@ -205,7 +205,9 @@ export class UI {
       <span class="kbd">Shift</span>+<span class="kbd">Ctrl</span> while running: <b>slide</b> (fits under pipes and barriers, <span class="kbd">Space</span> to jump out of it)</p>
       <p><b style="color:#fff">Parkour</b><br>
       <span class="kbd">Space</span> at an obstacle vaults low cover or climbs a ledge · run into low cover to auto-vault ·
-      <span class="kbd">E</span> at a ladder to climb, <span class="kbd">W</span>/<span class="kbd">S</span> up and down, <span class="kbd">Space</span> to drop off</p>
+      <span class="kbd">E</span> at a ladder to climb, <span class="kbd">W</span>/<span class="kbd">S</span> up and down, <span class="kbd">Space</span> to drop off<br>
+      fall past a rooftop edge and you <b>catch the ledge</b> — <span class="kbd">A</span>/<span class="kbd">D</span> shimmy along it,
+      <span class="kbd">Space</span> climbs up, <span class="kbd">S</span> lets go (hanging burns stamina)</p>
       <p><b style="color:#fff">Combat</b><br>
       <span class="kbd">F</span> / <span class="kbd">LMB</span> Melee combo · <span class="kbd">G</span> Draw / holster firearm ·
       <span class="kbd">RMB</span> Aim · <span class="kbd">LMB</span> Fire · <span class="kbd">R</span> Reload</p>

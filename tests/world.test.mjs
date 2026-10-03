@@ -146,6 +146,30 @@ test('a player can climb every ladder to the top', () => {
   }
 });
 
+test('rooftop lips in the real town can be caught in mid-air', () => {
+  let caught = 0, tried = 0;
+  for (const l of builder.ladders) {
+    const roof = world.groundAt(l.x + Math.sin(l.yaw) * 0.7, l.z + Math.cos(l.yaw) * 0.7,
+      l.top + 0.5, R, 0.9);
+    if (!roof.box || roof.y < 2.5) continue;                  // need a real drop below it
+    tried++;
+    const p = spawnPlayer(
+      l.x - Math.sin(l.yaw) * 0.62, l.z - Math.cos(l.yaw) * 0.62, roof.y - 1.4, l.yaw);
+    const input = new FakeInput();
+    input.move = { x: 0, z: -1 };                             // press into the wall
+    for (let f = 0; f < 90 && p.motion !== 'hang'; f++) {
+      p.update(1 / 60, { input, camYaw: l.yaw, camPitch: 0 });
+    }
+    if (p.motion === 'hang') {
+      caught++;
+      assert(Math.abs(p.pos.y - (roof.y - CONFIG.player.hangDrop)) < 0.6,
+        `hangs just under the lip at ${l.x.toFixed(1)},${l.z.toFixed(1)}`);
+    }
+  }
+  assert(tried > 0, 'no rooftops high enough to test');
+  assert(caught > 0, `caught ${caught} of ${tried} rooftop lips`);
+});
+
 test('every door has somewhere to stand in front of it', () => {
   for (const d of builder.doors) {
     let ok = false;

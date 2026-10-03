@@ -81,6 +81,17 @@ export const CONFIG = {
     vaultMaxDepth: 2.3,     // thicker than this: mantle on top instead
     vaultDuration: 0.52,
     mantleMaxHeight: 2.45,  // ledges, roofs, containers -> climb up
+
+    // --- ledge hang (catching a lip in mid-air) ---
+    hangMinHeight: 1.05,    // lips higher than this are caught instead of mantled
+    hangMaxHeight: 3.60,    // how far above the feet the hands can still catch
+    hangDrop: 1.70,         // distance the feet hang below the lip
+    hangReach: 0.62,        // how far the chest sits from the wall while hanging
+    shimmySpeed: 1.35,      // sideways m/s along a ledge
+    hangDrain: 6,           // stamina per second while hanging
+    hangMantleCost: 16,
+    hangCooldown: 0.45,     // stops an instant re-grab after dropping
+
     mantleDuration: 0.80,
     ledgeReach: 0.80,       // forward probe distance
     ladderSpeed: 2.5,
