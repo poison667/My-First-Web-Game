@@ -312,8 +312,18 @@ test('vehicles can be entered and driven, then exited', () => {
   key('keydown', 'KeyW');
   frames(120);
   assert(Math.abs(v.speed) > 1, `car is moving at ${v.speed.toFixed(2)} m/s`);
+  assert(v.rpm > 0 && v.engineOn, 'the engine is running under load');
   key('keyup', 'KeyW');
-  frames(240);
+
+  // You cannot step out of a moving car, so brake to a stop first.
+  game._exitVehicle();
+  assert(game.player.inVehicle === v, 'bailing out at speed is refused');
+  key('keydown', 'KeyS');
+  for (let i = 0; i < 600 && v.speed > 0.4; i++) frames(1);   // hold the brake
+  key('keyup', 'KeyS');                                        // ...then let it go,
+  frames(30);                                                  // or it reverses away
+  assert(Math.abs(v.speed) < 1, `braked to a stop (${v.speed.toFixed(2)} m/s)`);
+
   game._exitVehicle();
   frames(10);
   assert(!game.player.inVehicle, 'back on foot');
@@ -360,6 +370,152 @@ test('ladders are offered and can be climbed from the prompt', () => {
   key('keyup', 'KeyW');
   frames(30);
   assert(game.player.pos.y > l.top - 1.2, `climbed to y=${game.player.pos.y.toFixed(2)} (top ${l.top})`);
+});
+
+test('the fleet is parked around town, out of the walls and ready to drive', () => {
+  const fleet = game.vehicleMgr.vehicles;
+  assert(fleet.length >= 20, `only ${fleet.length} vehicles spawned`);
+  const classes = new Set(fleet.map(v => v.class));
+  for (const c of ['car', 'motorcycle', 'truck', 'van', 'bus', 'emergency']) {
+    assert(classes.has(c), `the town has no ${c}`);
+  }
+  // nothing should be parked inside a building
+  for (const v of fleet) {
+    const boxes = game.world.query(v.pos.x - 4, v.pos.z - 4, v.pos.x + 4, v.pos.z + 4, []);
+    for (const b of boxes) {
+      if (b.maxY < v.def.wheelRadius || b.minY > v.def.wheelRadius + v.def.height) continue;
+      const inside = v.pos.x > b.minX && v.pos.x < b.maxX && v.pos.z > b.minZ && v.pos.z < b.maxZ;
+      assert(!inside, `${v.type} is parked inside a building at ${v.pos.x.toFixed(0)}, ${v.pos.z.toFixed(0)}`);
+    }
+  }
+});
+
+test('different vehicle classes feel genuinely different to drive', () => {
+  // Put each one on the same clear stretch of road facing the same way, so the
+  // only thing that differs between the runs is the vehicle itself.
+  const lane = clearestHeading(SPAWN);
+  const run = (type) => {
+    const v = game.vehicleMgr.spawn(type,
+      SPAWN.x + Math.sin(lane.yaw) * 5, SPAWN.z + Math.cos(lane.yaw) * 5, lane.yaw);
+    assert(v, `could not spawn a ${type}`);
+    game.player.setPosition(v.pos.x, 0, v.pos.z, lane.yaw);
+    game._enterVehicle(v);
+    frames(5);
+    v.fuel = v.fuelCapacity;
+    key('keydown', 'KeyW');
+    frames(300);                       // 5 seconds flat out
+    const speed = v.speedKmh();
+    key('keyup', 'KeyW');
+    key('keydown', 'KeyS');
+    for (let i = 0; i < 900 && v.speed > 0.4; i++) frames(1);
+    key('keyup', 'KeyS');
+    frames(20);
+    game._exitVehicle();
+    frames(5);
+    assert(!game.player.inVehicle, `could not get out of the ${type}`);
+    assert(v.health > 90, `the ${type} crashed during its run (${v.health.toFixed(0)}% body)`);
+    // take the test vehicle back out of the world
+    v.remove();
+    game.vehicleMgr.vehicles.splice(game.vehicleMgr.vehicles.indexOf(v), 1);
+    return speed;
+  };
+  const sports = run('sports');
+  const bus = run('citybus');
+  assert(sports > bus * 1.8, `after 5 s: sports ${sports.toFixed(0)} km/h vs bus ${bus.toFixed(0)} km/h`);
+});
+
+test('the instrument cluster appears while driving and reads out the vehicle', () => {
+  const doc = window.document;
+  const hud = doc.getElementById('vehicle-hud');
+  assert(hud.classList.contains('hidden'), 'the cluster is visible on foot');
+
+  const v = game.vehicleMgr.vehicles.find(x => x.type === 'pickup');
+  game.player.setPosition(v.pos.x, 0, v.pos.z + 3, Math.PI);
+  game._enterVehicle(v);
+  v.fuel = v.fuelCapacity * 0.5;
+  frames(5);
+  assert(!hud.classList.contains('hidden'), 'the cluster stayed hidden while driving');
+
+  // the performance card is dealt on entry and lists measured figures
+  const card = doc.getElementById('vehicle-card');
+  assert(!card.classList.contains('hidden'), 'no performance card on entry');
+  assert(doc.getElementById('vc-name').textContent === v.name, 'the card names the wrong vehicle');
+  assert(doc.getElementById('vc-bars').children.length >= 5, 'the card has no stat bars');
+  assert(/km\/h/.test(doc.getElementById('vc-figures').textContent), 'the card lists no figures');
+
+  assert(doc.getElementById('vh-name').textContent === v.name, 'the cluster shows the wrong vehicle');
+
+  key('keydown', 'KeyW');
+  frames(240);
+  key('keyup', 'KeyW');
+  const shown = parseInt(doc.getElementById('vh-speed').textContent, 10);
+  assert(Math.abs(shown - v.speedKmh()) < 2, `speedo reads ${shown} but the truck is doing ${v.speedKmh().toFixed(0)}`);
+  assert(doc.getElementById('vh-gear').textContent !== 'N', 'the gear readout never left neutral');
+  const fuelWidth = parseFloat(doc.getElementById('vh-fuel').style.width);
+  assert(fuelWidth > 30 && fuelWidth < 70, `fuel gauge reads ${fuelWidth}% on a half tank`);
+
+  key('keydown', 'KeyS');
+  for (let i = 0; i < 900 && v.speed > 0.4; i++) frames(1);
+  key('keyup', 'KeyS');
+  frames(20);
+  game._exitVehicle();
+  frames(5);
+  assert(hud.classList.contains('hidden'), 'the cluster stayed up after getting out');
+});
+
+test('fuel is consumed while driving and can be bought at a pump', () => {
+  const v = game.vehicleMgr.vehicles.find(x => x.def.fuelType === 'petrol' && x.class === 'car');
+  game.player.setPosition(v.pos.x, 0, v.pos.z + 3, Math.PI);
+  game._enterVehicle(v);
+  v.fuel = 20;
+  frames(5);
+  key('keydown', 'KeyW');
+  frames(420);
+  key('keyup', 'KeyW');
+  assert(v.fuel < 20, `fuel did not drop (still ${v.fuel.toFixed(2)} L)`);
+
+  // park on the forecourt and fill up
+  const station = game.vehicleMgr.nearestStation(v.pos, v);
+  assert(station, 'no pump sells petrol');
+  v.pos.set(station.pos.x + 1, 0, station.pos.z + 1);
+  v.speed = 0; v.vel.set(0, 0, 0);
+  game.state.money = 500;
+  const before = v.fuel;
+  game._refuelVehicle(v, station);
+  assert(v.fuel > before, 'refuelling added nothing');
+  assert(game.state.money < 500, 'the fuel was free');
+
+  game._exitVehicle();
+  frames(5);
+});
+
+test('stealing a police car raises the wanted level', () => {
+  const wantedBefore = game.state.wanted;
+  const cop = game.vehicleMgr.vehicles.find(x => x.class === 'emergency');
+  game.player.setPosition(cop.pos.x, 0, cop.pos.z + 3, Math.PI);
+  game._enterVehicle(cop);
+  frames(5);
+  assert(game.state.wanted > wantedBefore, 'nobody noticed the stolen emergency vehicle');
+  cop.speed = 0; cop.vel.set(0, 0, 0);
+  game._exitVehicle();
+  frames(5);
+  game.state.setWanted(0);
+  game.npcMgr.clearEnemies();
+  game.cops = [];
+});
+
+test('vehicle condition survives a save and load', () => {
+  const v = game.vehicleMgr.vehicles[2];
+  v.fuel = 9.5; v.health = 55; v.pos.set(40, 0, -20);
+  game.save();
+  v.fuel = 60; v.health = 100; v.pos.set(0, 0, 0);
+  game.load(true);
+  frames(2);
+  assert(Math.abs(v.fuel - 9.5) < 0.01, `fuel came back as ${v.fuel}`);
+  assert(Math.abs(v.health - 55) < 0.01, `health came back as ${v.health}`);
+  // it is restored to (40, -20) and then pushed clear of anything it overlaps
+  assert(Math.abs(v.pos.x - 40) < 10 && Math.abs(v.pos.z + 20) < 10,
+    `position came back as ${v.pos.x.toFixed(1)}, ${v.pos.z.toFixed(1)}`);
 });
 
 test('save and load round-trip through localStorage', () => {

@@ -26,6 +26,11 @@ export const DEFAULT_BINDINGS = {
   reload:       ['KeyR'],
   holster:      ['KeyG'],
   vehicle:      ['KeyV'],
+  horn:         ['KeyH'],
+  siren:        ['KeyB'],
+  headlights:   ['KeyL'],
+  gearUp:       ['KeyX'],
+  gearDown:     ['KeyZ'],
   shoulder:     ['KeyQ'],
   menu:         ['Tab'],
   map:          ['KeyM'],
@@ -57,6 +62,7 @@ export class Input {
 
     this.trapKeys = new Set(['Tab', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
       'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyF', 'KeyM', 'KeyV', 'KeyC', 'KeyG', 'KeyQ', 'KeyR',
+      'KeyH', 'KeyB', 'KeyL', 'KeyX', 'KeyZ',
       'ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'ShiftLeft']);
 
     this._bindDom();
@@ -239,6 +245,9 @@ export class Input {
       walk: btn(13),                // D-pad down
       reload: btn(14),              // D-pad left
       crouchToggle: btn(12),        // D-pad up
+      horn: btn(2),                 // X    (doubles as melee on foot)
+      siren: btn(14),               // D-pad left while driving
+      headlights: btn(15),          // D-pad right
       pause: false,                 // keyboard only; Start already opens the menu
     };
     const prev = this._padPrev;

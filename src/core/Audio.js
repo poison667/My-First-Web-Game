@@ -126,4 +126,162 @@ export class AudioManager {
     // short tick whose pitch rises with speed — called sparsely while driving
     this.blip(80 + speed01 * 160, 0.05, 'sawtooth', 0.05);
   }
+
+  // =========================================================================
+  // Continuous vehicle sources
+  //
+  // A one-shot per frame cannot sound like an engine, so driving gets real
+  // sustained nodes: two detuned saws for the crank, a filtered noise bed for
+  // induction/tyre roar, and a siren oscillator. They are created on demand
+  // and parked at zero gain when idle rather than being rebuilt constantly.
+  // =========================================================================
+
+  _ensureEngineRig() {
+    if (!this.ctx || this.engineRig) return this.engineRig;
+    const ctx = this.ctx;
+    const out = ctx.createGain();
+    out.gain.value = 0;
+    out.connect(this.master);
+
+    // body resonance keeps the saws from sounding like a buzzer
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 900;
+    lp.Q.value = 0.8;
+    lp.connect(out);
+
+    const oscA = ctx.createOscillator(); oscA.type = 'sawtooth';
+    const oscB = ctx.createOscillator(); oscB.type = 'square';
+    const gA = ctx.createGain(); gA.gain.value = 0.5;
+    const gB = ctx.createGain(); gB.gain.value = 0.22;
+    oscA.connect(gA); gA.connect(lp);
+    oscB.connect(gB); gB.connect(lp);
+    oscA.frequency.value = 60; oscB.frequency.value = 30;
+
+    // tyre / wind bed
+    const bufferSize = 2 * ctx.sampleRate;
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer; noise.loop = true;
+    const nf = ctx.createBiquadFilter();
+    nf.type = 'bandpass'; nf.frequency.value = 480; nf.Q.value = 0.7;
+    const ng = ctx.createGain(); ng.gain.value = 0;
+    noise.connect(nf); nf.connect(ng); ng.connect(out);
+
+    oscA.start(); oscB.start(); noise.start();
+    this.engineRig = { out, lp, oscA, oscB, gA, gB, noise, nf, ng };
+    return this.engineRig;
+  }
+
+  /**
+   * Drive the engine loop.
+   * @param {object} p {rpm01, load, speed01, electric, running, cylinders}
+   */
+  engineLoop(p = {}) {
+    if (!this.ctx) return;
+    const rig = this._ensureEngineRig();
+    if (!rig) return;
+    const now = this.ctx.currentTime;
+    const smooth = (param, value, t = 0.08) => {
+      param.cancelScheduledValues(now);
+      param.setTargetAtTime(value, now, t);
+    };
+
+    if (!p.running) {
+      smooth(rig.out.gain, 0, 0.12);
+      smooth(rig.ng.gain, 0, 0.12);
+      return;
+    }
+    const rpm01 = Math.max(0.05, Math.min(1.1, p.rpm01 || 0));
+    const load = Math.max(0, Math.min(1, p.load || 0));
+    const speed01 = Math.max(0, Math.min(1, p.speed01 || 0));
+
+    if (p.electric) {
+      // EVs whine: a high, clean tone that tracks road speed
+      smooth(rig.oscA.frequency, 220 + speed01 * 1500, 0.06);
+      smooth(rig.oscB.frequency, 440 + speed01 * 2600, 0.06);
+      smooth(rig.gA.gain, 0.10, 0.1);
+      smooth(rig.gB.gain, 0.04, 0.1);
+      smooth(rig.lp.frequency, 2400 + speed01 * 3000, 0.1);
+      smooth(rig.out.gain, (0.05 + load * 0.05) * this.settings.masterVolume, 0.1);
+    } else {
+      // firing frequency: revs * cylinders / 2
+      const cylinders = p.cylinders || 4;
+      const base = 11 + rpm01 * 78;
+      smooth(rig.oscA.frequency, base * (cylinders / 4), 0.05);
+      smooth(rig.oscB.frequency, base * 0.5 * (cylinders / 4), 0.05);
+      smooth(rig.gA.gain, 0.34 + load * 0.3, 0.08);
+      smooth(rig.gB.gain, 0.14 + load * 0.2, 0.08);
+      smooth(rig.lp.frequency, 420 + rpm01 * 1700 + load * 700, 0.08);
+      smooth(rig.out.gain, (0.08 + load * 0.07 + rpm01 * 0.03) * this.settings.masterVolume, 0.09);
+    }
+    smooth(rig.nf.frequency, 300 + speed01 * 1400, 0.1);
+    smooth(rig.ng.gain, speed01 * 0.05 * this.settings.masterVolume, 0.12);
+  }
+
+  stopEngineLoop() {
+    if (!this.engineRig || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    this.engineRig.out.gain.cancelScheduledValues(now);
+    this.engineRig.out.gain.setTargetAtTime(0, now, 0.1);
+    this.engineRig.ng.gain.setTargetAtTime(0, now, 0.1);
+  }
+
+  /** Two-tone emergency siren. kind: 'police' | 'ambulance' | 'fire'. */
+  siren(on, kind = 'police') {
+    if (!this.ctx) return;
+    if (!this.sirenRig) {
+      const ctx = this.ctx;
+      const out = ctx.createGain(); out.gain.value = 0; out.connect(this.master);
+      const osc = ctx.createOscillator(); osc.type = 'sawtooth';
+      const lfo = ctx.createOscillator(); lfo.type = 'triangle';
+      const lfoGain = ctx.createGain();
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1200; bp.Q.value = 2.2;
+      lfo.connect(lfoGain); lfoGain.connect(osc.frequency);
+      osc.connect(bp); bp.connect(out);
+      osc.frequency.value = 700; lfo.frequency.value = 1.2; lfoGain.gain.value = 260;
+      osc.start(); lfo.start();
+      this.sirenRig = { out, osc, lfo, lfoGain, bp };
+    }
+    const rig = this.sirenRig;
+    const now = this.ctx.currentTime;
+    if (!on) { rig.out.gain.setTargetAtTime(0, now, 0.08); return; }
+    const presets = {
+      police: { f: 700, rate: 1.4, depth: 300, type: 'sawtooth' },
+      ambulance: { f: 620, rate: 0.9, depth: 380, type: 'square' },
+      fire: { f: 480, rate: 0.5, depth: 220, type: 'sawtooth' },
+    };
+    const k = presets[kind] || presets.police;
+    rig.osc.type = k.type;
+    rig.osc.frequency.setTargetAtTime(k.f, now, 0.05);
+    rig.lfo.frequency.setTargetAtTime(k.rate, now, 0.05);
+    rig.lfoGain.gain.setTargetAtTime(k.depth, now, 0.05);
+    rig.out.gain.setTargetAtTime(0.07 * this.settings.masterVolume, now, 0.08);
+  }
+
+  /** Vehicle horn — pitch separates a hatchback from a seven-tonne truck. */
+  horn(pitch = 1) {
+    this.blip(330 * pitch, 0.4, 'square', 0.14);
+    this.blip(415 * pitch, 0.4, 'sawtooth', 0.09);
+  }
+
+  /** Tyre squeal, scaled by how hard the tyres are being asked to work. */
+  skid(amount = 1) {
+    this.noise({ dur: 0.22 + amount * 0.2, vol: 0.05 + amount * 0.07, freq: 1100 + amount * 700, q: 5.5, sweep: -300 });
+  }
+
+  /** Metal-on-metal crunch for collisions. */
+  crash(force = 1) {
+    const f = Math.min(1, force);
+    this.noise({ dur: 0.18 + f * 0.25, vol: 0.12 + f * 0.2, freq: 220 + f * 260, q: 0.6, sweep: -180 });
+    this.blip(70 + f * 50, 0.16, 'square', 0.12 + f * 0.12);
+  }
+
+  /** Fuel pump click-and-whir. */
+  refuel() {
+    this.blip(880, 0.05, 'square', 0.1);
+    this.noise({ dur: 0.5, vol: 0.04, freq: 400, q: 1.4, sweep: 60 });
+  }
 }

@@ -37,8 +37,26 @@ export class UI {
       shop: document.getElementById('shop'), shopName: document.getElementById('shop-name'), shopMoney: document.getElementById('shop-money'),
       shopBuy: document.getElementById('shop-buy'), shopSell: document.getElementById('shop-sell'), shopClose: document.getElementById('shop-close'),
       fade: document.getElementById('fade'),
+      vehicleHud: document.getElementById('vehicle-hud'),
+      vhSpeed: document.getElementById('vh-speed'), vhGear: document.getElementById('vh-gear'),
+      vhSpeedArc: document.getElementById('vh-speed-arc'), vhRevArc: document.getElementById('vh-rev-arc'),
+      vhName: document.getElementById('vh-name'),
+      vhFuel: document.getElementById('vh-fuel'), vhFuelLabel: document.getElementById('vh-fuel-label'),
+      vhHealth: document.getElementById('vh-health'),
+      vehicleCard: document.getElementById('vehicle-card'),
+      vcName: document.getElementById('vc-name'), vcClass: document.getElementById('vc-class'),
+      vcDesc: document.getElementById('vc-desc'), vcBars: document.getElementById('vc-bars'),
+      vcFigures: document.getElementById('vc-figures'),
+      vhLights: document.getElementById('vh-lights'), vhSiren: document.getElementById('vh-siren'),
+      vhHand: document.getElementById('vh-hand'), vhWarn: document.getElementById('vh-warn'),
     };
     this.mmCtx = this.el.minimap.getContext('2d');
+    // the gauge sweep is one SVG arc; stroke-dasharray turns it into a dial
+    this._arcLen = 0;
+    if (this.el.vhSpeedArc?.getTotalLength) {
+      try { this._arcLen = this.el.vhSpeedArc.getTotalLength(); } catch { this._arcLen = 300; }
+    }
+    if (!this._arcLen) this._arcLen = 300;
   }
 
   _bind() {
@@ -387,6 +405,99 @@ export class UI {
   fade(show) { this.el.fade.classList.toggle('show', show); }
 
   // ---------- Minimap ----------
+  // ---------- Vehicle cluster ----------
+  /**
+   * Flash up a vehicle's performance card. The figures come from running the
+   * real simulation (Vehicle.measure), so they are what you will actually get.
+   */
+  showVehicleCard(stats, vehicle) {
+    const el = this.el;
+    if (!el.vehicleCard || !stats) return;
+    el.vcName.textContent = stats.name;
+    el.vcClass.textContent = stats.class;
+    el.vcDesc.textContent = stats.desc || '';
+
+    const labels = { accel: 'ACCEL', speed: 'TOP SPEED', braking: 'BRAKING', handling: 'HANDLING', toughness: 'BUILD' };
+    el.vcBars.innerHTML = Object.entries(labels).map(([k, label]) => {
+      const pct = Math.round((stats.bars[k] || 0) * 100);
+      return `<div class="vc-row"><span>${label}</span><div class="vc-meter"><i style="width:${pct}%"></i></div></div>`;
+    }).join('');
+
+    const unit = stats.fuelType === 'electric' ? 'kWh' : 'L';
+    const zero = stats.zeroToHundred ? `${stats.zeroToHundred.toFixed(1)} s` : '—';
+    const figures = [
+      ['0–100', zero],
+      ['Top', `${stats.topSpeedKmh.toFixed(0)} km/h`],
+      ['Power', `${stats.power} kW`],
+      ['Weight', `${(stats.mass / 1000).toFixed(2)} t`],
+      ['Range', `${stats.rangeKm.toFixed(0)} km`],
+      ['Tank', `${stats.fuelCapacity} ${unit}`],
+      ['Seats', String(stats.seats)],
+      ['Turns in', `${stats.turningCircle.toFixed(1)} m`],
+    ];
+    el.vcFigures.innerHTML = figures.map(([k, v]) => `<div>${k} <b>${v}</b></div>`).join('');
+
+    el.vehicleCard.classList.remove('hidden', 'fade');
+    clearTimeout(this._vcFadeT);
+    clearTimeout(this._vcHideT);
+    this._vcFadeT = setTimeout(() => el.vehicleCard.classList.add('fade'), 5200);
+    this._vcHideT = setTimeout(() => el.vehicleCard.classList.add('hidden'), 5800);
+  }
+
+  hideVehicleCard() {
+    clearTimeout(this._vcFadeT);
+    clearTimeout(this._vcHideT);
+    this.el.vehicleCard?.classList.add('hidden');
+  }
+
+
+  /**
+   * Drive the instrument cluster. Pass null when on foot to hide it.
+   * @param {object|null} v  the Vehicle being driven
+   */
+  updateVehicleHUD(v) {
+    const el = this.el;
+    if (!el.vehicleHud) return;
+    if (!v) {
+      if (!el.vehicleHud.classList.contains('hidden')) el.vehicleHud.classList.add('hidden');
+      return;
+    }
+    el.vehicleHud.classList.remove('hidden');
+
+    const kmh = v.speedKmh();
+    el.vhSpeed.textContent = Math.round(kmh);
+    el.vhGear.textContent = v.gearLabel();
+    el.vhName.textContent = v.name;
+
+    // speed needle sweeps against this vehicle's own top speed
+    const top = Math.max(40, v.maxSpeed * 3.6);
+    const len = this._arcLen;
+    const speedFrac = Math.max(0, Math.min(1, kmh / top));
+    el.vhSpeedArc.style.strokeDasharray = `${(speedFrac * len).toFixed(1)} ${len}`;
+    const revFrac = Math.max(0, Math.min(1, v.rpmFraction()));
+    el.vhRevArc.style.strokeDasharray = `${(revFrac * len).toFixed(1)} ${len}`;
+    el.vhRevArc.style.opacity = v.engineOn ? (0.35 + revFrac * 0.65).toFixed(2) : '0.12';
+
+    // fuel
+    const fuel = v.fuelFraction();
+    el.vhFuelLabel.textContent = v.isElectric() ? 'CHARGE' : 'FUEL';
+    el.vhFuel.style.width = (fuel * 100).toFixed(0) + '%';
+    el.vhFuel.className = fuel < 0.12 ? 'bad flash' : fuel < 0.3 ? 'warn' : 'good';
+
+    // body condition
+    const hp = Math.max(0, v.health) / 100;
+    el.vhHealth.style.width = (hp * 100).toFixed(0) + '%';
+    el.vhHealth.className = hp < 0.25 ? 'bad flash' : hp < 0.55 ? 'warn' : 'good';
+
+    el.vhLights.classList.toggle('on', !!v.lightsOn);
+    el.vhSiren.classList.toggle('hidden', !v.def.siren);
+    el.vhSiren.classList.toggle('on', !!v.sirenOn);
+    el.vhHand.classList.toggle('on', !!v.handbrakeOn);
+    const warn = v.engineHealth < 55 || v.tankHealth < 55 || v.burning > 0;
+    el.vhWarn.classList.toggle('on', warn);
+    el.vhWarn.textContent = v.burning > 0 ? 'ON FIRE' : v.tankHealth < 55 ? 'FUEL LEAK' : 'CHECK ENGINE';
+  }
+
   drawMinimap(player, npcMgr, markerTarget, camYaw) {
     const ctx = this.mmCtx; const size = 180; const cx = size / 2, cy = size / 2;
     const range = 90; const scale = (size / 2) / range;

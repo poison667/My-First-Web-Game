@@ -52,6 +52,7 @@ export class GameState {
     this.playSeconds = 0;
     this.spawn = null;        // saved player position {x,y,z,rot}
     this.collected = [];      // collectible ids found
+    this.fleet = null;        // saved condition/position of every vehicle
   }
 
   // ---- Economy ----
@@ -166,6 +167,7 @@ export class GameState {
       reputation: this.reputation, relationships: this.relationships, romance: this.romance, flags: this.flags,
       wanted: this.wanted, completed: this.completed, activeMission: this.activeMission, missionProgress: this.missionProgress,
       mode: this.mode, time: this.time, playSeconds: this.playSeconds, spawn: this.spawn, collected: this.collected,
+      fleet: this.fleet,
     };
   }
   deserialize(d) {

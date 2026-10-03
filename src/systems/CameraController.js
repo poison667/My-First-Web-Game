@@ -121,7 +121,24 @@ export class CameraController {
   update(dt, opts = {}) {
     const target = opts.target || new THREE.Vector3();
     if (opts.mode) this.setMode(opts.mode);
-    const want = MODES[this.mode] || MODES.normal;
+    let want = MODES[this.mode] || MODES.normal;
+
+    // Driving: frame the vehicle by its actual size and speed. A scooter sits
+    // close and low, a fire truck needs the camera well back and high, and
+    // everything drifts further out the faster it is going.
+    if (this.mode === 'vehicle' && opts.vehicle) {
+      const v = opts.vehicle;
+      const size = Math.max(v.def.length, v.def.width * 1.6);
+      const speedN = Math.min(1, Math.abs(v.speed) / Math.max(8, v.maxSpeed * 0.55));
+      const dist = Math.max(C.vehicleMinDistance, Math.min(C.vehicleMaxDistance,
+        size * C.vehicleSizeScale + 3.0 + speedN * C.vehicleSpeedPull));
+      want = {
+        ...want,
+        dist,
+        height: v.def.height * 0.75 + 1.0,
+        fov: C.fovVehicle + speedN * C.vehicleFovSpeed,
+      };
+    }
 
     // ---- blend mode parameters ------------------------------------------
     const mk = expSmooth(this.mode === 'aim' ? 16 : 9, dt);

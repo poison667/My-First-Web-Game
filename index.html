@@ -48,6 +48,50 @@
     <div id="hitmarker"></div>
     <div id="notifications"></div>
     <div id="mode-badge">STUDENT</div>
+    <!-- Performance card, shown for a few seconds when you get in -->
+    <div id="vehicle-card" class="hidden">
+      <div class="vc-head">
+        <b id="vc-name">—</b>
+        <span id="vc-class">—</span>
+      </div>
+      <div id="vc-desc" class="vc-desc">—</div>
+      <div id="vc-bars"></div>
+      <div id="vc-figures" class="vc-figures"></div>
+    </div>
+
+    <!-- Vehicle instrument cluster: speedo, tacho, gear, fuel and condition -->
+    <div id="vehicle-hud" class="hidden">
+      <div class="vh-dial">
+        <svg viewBox="0 0 120 120" class="vh-gauge">
+          <path class="vh-track" d="M 18 96 A 52 52 0 1 1 102 96" />
+          <path id="vh-rev-arc" class="vh-rev" d="M 18 96 A 52 52 0 1 1 102 96" />
+          <path id="vh-speed-arc" class="vh-speed" d="M 18 96 A 52 52 0 1 1 102 96" />
+        </svg>
+        <div class="vh-readout">
+          <span id="vh-speed">0</span>
+          <small>km/h</small>
+        </div>
+        <div id="vh-gear" class="vh-gear">N</div>
+      </div>
+      <div class="vh-side">
+        <div id="vh-name" class="vh-name">—</div>
+        <div class="vh-bar-row">
+          <span class="vh-label" id="vh-fuel-label">FUEL</span>
+          <div class="vh-bar"><i id="vh-fuel"></i></div>
+        </div>
+        <div class="vh-bar-row">
+          <span class="vh-label">BODY</span>
+          <div class="vh-bar"><i id="vh-health" class="good"></i></div>
+        </div>
+        <div class="vh-tags">
+          <span id="vh-lights" class="vh-tag">LIGHTS</span>
+          <span id="vh-siren" class="vh-tag">SIREN</span>
+          <span id="vh-hand" class="vh-tag">HAND</span>
+          <span id="vh-warn" class="vh-tag warn">CHECK ENGINE</span>
+        </div>
+      </div>
+    </div>
+
     <div id="state-strip">
       <span id="stance">IDLE</span>
       <span id="weapon-hud" class="hidden"></span>
@@ -55,7 +99,9 @@
     <div id="controls-hint">
       <b>WASD</b> move · <b>Shift</b> sprint · <b>Alt</b> walk · <b>Ctrl/C</b> crouch (slide while sprinting) ·
       <b>Space</b> jump / vault / climb · <b>E</b> interact · <b>V</b> vehicle · <b>F</b> melee · <b>G</b> draw gun ·
-      <b>RMB</b> aim · <b>Q</b> shoulder
+      <b>RMB</b> aim · <b>Q</b> shoulder<br>
+      <b>Driving:</b> <b>W/S</b> throttle &amp; brake · <b>A/D</b> steer · <b>Space</b> handbrake ·
+      <b>Z/X</b> gears · <b>H</b> horn · <b>L</b> lights · <b>B</b> siren
     </div>
   </div>
 

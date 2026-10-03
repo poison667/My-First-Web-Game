@@ -15,6 +15,7 @@ import { DialogueManager } from './systems/DialogueManager.js';
 import { TownBuilder } from './world/TownBuilder.js';
 import { Player } from './entities/Player.js';
 import { Vehicle } from './entities/Vehicle.js';
+import { VehicleManager } from './systems/VehicleManager.js';
 import { UI } from './ui/UI.js';
 import { BUILDINGS, INTERIORS, LOCATIONS } from './data/world.js';
 import { ITEMS } from './data/items.js';
@@ -113,14 +114,15 @@ export class Game {
     this.dialogue.onClose = () => { this._maybeLock(); };
     this.dialogue.onShop = (shopId) => this.openShop(shopId);
 
-    // Vehicles
-    this.vehicles = [
-      new Vehicle(this.scene, LOCATIONS.home.x + 8, LOCATIONS.home.z + 12, 0x3b7fcf),
-      new Vehicle(this.scene, LOCATIONS.downtown.x, LOCATIONS.downtown.z + 14, 0xcf3b3b),
-      new Vehicle(this.scene, LOCATIONS.warehouse.x - 14, LOCATIONS.warehouse.z - 16, 0x2a2a2a),
-      new Vehicle(this.scene, LOCATIONS.school_gate.x + 16, LOCATIONS.school_gate.z + 6, 0xd8b23c),
-    ];
-    for (const v of this.vehicles) v.onImpact = (f) => { this.camCtrl.addShake(Math.min(0.8, f * 0.06), 0.3); this.audio.hit(); };
+    // Vehicles — the whole town fleet: cars, bikes, vans, trucks, buses and
+    // emergency services, each with its own physics from data/vehicles.js.
+    Vehicle.fuelScale = CONFIG.vehicle.fuelScale;
+    this.vehicleMgr = new VehicleManager(this.scene, this.world, {
+      onImpact: (f, v) => this._onVehicleImpact(f, v),
+      onEvent: (name, data, v) => this._onVehicleEvent(name, data, v),
+    });
+    this.vehicleMgr.spawnAll();
+    this.vehicles = this.vehicleMgr.vehicles;   // legacy alias
 
     this.input = new Input(this.canvas, this.settings);
     this._registerInteractions();
@@ -209,10 +211,34 @@ export class Game {
     // Vehicles
     I.addProvider((ctx, out) => {
       if (ctx.player.inVehicle) return;
-      for (const v of this.vehicles) {
+      for (const v of this.vehicleMgr.vehicles) {
+        if (v.destroyed) continue;
+        const label = v.locked ? `Hot-wire the ${v.name}`
+          : v.class === 'motorcycle' ? `Ride the ${v.name}` : `Drive the ${v.name}`;
         out.push({
-          pos: v.pos, range: 3.6, priority: 0.9, key: 'vehicle', keyLabel: 'V',
-          label: 'Get in the car', action: () => this._enterVehicle(v),
+          pos: v.pos,
+          // reach is measured from the centre, so long bodies need more of it
+          // or you could never open the door of a bus
+          range: CONFIG.vehicle.enterRange + Math.max(0, v.halfLength - 1.4),
+          priority: 0.9, key: 'vehicle', keyLabel: 'V',
+          label, action: () => this._enterVehicle(v),
+        });
+      }
+    });
+
+    // Fuel pumps and chargers — only while sitting in something thirsty
+    I.addProvider((ctx, out) => {
+      const v = ctx.player.inVehicle;
+      if (!v) return;
+      for (const st of this.vehicleMgr.stations) {
+        if (!st.kinds.includes(v.def.fuelType)) continue;
+        const unit = v.def.fuelType === 'electric' ? 'kWh' : 'L';
+        out.push({
+          pos: st.pos, range: CONFIG.vehicle.stationRange, priority: 1.4, key: 'interact', keyLabel: 'E',
+          label: v.fuel >= v.fuelCapacity - 0.1
+            ? `${st.name} — tank full`
+            : `${st.name} — $${st.price.toFixed(2)}/${unit}`,
+          action: () => this._refuelVehicle(v, st),
         });
       }
     });
@@ -491,6 +517,7 @@ export class Game {
     const showCross = playing && (p.aiming || (this.weapons.drawn && !p.inVehicle));
     this.ui.setCrosshair(showCross, this.weapons.crosshairGap(), p.aiming);
     this.ui.setVignette(p.aimWeight, 1 - this.state.health / this.state.maxHealth);
+    this.ui.updateVehicleHUD(p.inVehicle && !uiBlocking ? p.inVehicle : null);
     this.ui.showControlsHint(this.hintT > 0 && !uiBlocking);
   }
 
@@ -508,25 +535,30 @@ export class Game {
 
     const driving = !!this.player.inVehicle;
 
+    // The whole fleet ticks every frame: the one you are sitting in reads the
+    // controls, everything near you keeps colliding, everything far away is
+    // frozen and hidden by the manager.
+    const night = hour > CONFIG.vehicle.nightLightsFrom || hour < CONFIG.vehicle.nightLightsTo;
+    if (night !== this._vehicleNight) {
+      this._vehicleNight = night;
+      this.vehicleMgr.setNightLights(night);
+    }
+    this.vehicleMgr.update(dt, this.player.pos, input, { blocked: uiBlock });
+
     if (driving) {
       // ---- vehicle --------------------------------------------------------
       const v = this.player.inVehicle;
-      v.update(dt, input, this.world, { blocked: uiBlock });
-      v.setLights(hour > 18.3 || hour < 6.6);
+      if (v.occupied) v.setLights(night || v.lightsOn);
       this.player.update(dt, { input, camYaw: this.camCtrl.yaw, camPitch: this.camCtrl.pitch, blockInput: true, canAim: false });
 
-      const vel = { x: Math.sin(v.rot) * v.speed, z: Math.cos(v.rot) * v.speed };
       this.camCtrl.update(dt, {
         target: new THREE.Vector3(v.pos.x, v.pos.y + 0.35, v.pos.z),
-        mode: 'vehicle', world: this.world, velocity: vel,
-        speedBoostFov: Math.min(12, Math.abs(v.speed) * 0.5),
+        mode: 'vehicle', world: this.world, vehicle: v,
+        velocity: { x: v.vel.x, z: v.vel.z },
       });
 
-      this.engineSoundT -= dt;
-      if (this.engineSoundT <= 0 && Math.abs(v.speed) > 0.5) {
-        this.engineSoundT = 0.1;
-        this.audio.engine(Math.min(1, Math.abs(v.speed) / v.maxSpeed));
-      }
+      this._driveAudio(dt, v);
+      this._driveFeedback(dt, v);
       if (input.pressed('vehicle')) this._exitVehicle();
     } else {
       // ---- on foot --------------------------------------------------------
@@ -580,10 +612,16 @@ export class Game {
     // ---- contextual interaction ------------------------------------------
     // Driving suppresses world prompts: the only contextual action in a car is
     // getting back out of it.
-    const canInteract = !driving && this.player.canAct();
+    // While driving the only interaction that makes sense is a fuel pump, and
+    // only once you have actually stopped at one.
+    const drivingParked = driving && Math.abs(this.player.inVehicle.speed) < 1.2;
+    const canInteract = (!driving || drivingParked) && this.player.canAct();
     const found = this.interaction.update({ player: this.player, camYaw: this.camCtrl.yaw, blocked: !canInteract });
-    if (driving) {
-      this.ui.setInteract('<b>V</b> Get out · <b>Space</b> Handbrake');
+    if (driving && found) {
+      this.ui.setInteract(this.interaction.prompt());
+      if (this.interaction.tryTrigger(input)) { this.audio.init(); this.audio.resume(); }
+    } else if (driving) {
+      this.ui.setInteract(this._drivingPrompt());
     } else if (this.player.motion === 'hang') {
       this.ui.setInteract('<b>Space / W</b> Climb up · <b>A / D</b> Shimmy · <b>S</b> Drop');
     } else if (found) {
@@ -784,17 +822,35 @@ export class Game {
   // =========================================================================
   _enterVehicle(v) {
     if (this.insideInterior) return;
+    if (v.destroyed) { this.ui.notify(`The ${v.name} is a write-off`, 'bad'); return; }
     v.occupied = true;
     this.player.enterVehicle(v);
-    this.ui.notify('Driving — W/S throttle, A/D steer, Space handbrake, V to get out', '');
+    v.startEngine();
+
+    // Taking something that is not yours gets noticed.
+    const emergency = v.class === 'emergency';
+    if (CONFIG.vehicle.crimeOnTheft && (v.locked || emergency)) {
+      const level = emergency ? CONFIG.vehicle.emergencyStealWanted : CONFIG.vehicle.stealWantedLevel;
+      if (typeof this._commitCrime === 'function') this._commitCrime(null, level);
+      this.ui.notify(`Stole a ${v.name}!`, 'bad');
+    }
+
+    this.ui.showVehicleCard(Vehicle.measure(v.type), v);
     this.audio.confirm();
+    this.audio.init();
+    this.audio.resume();
   }
 
   _exitVehicle() {
     const v = this.player.inVehicle;
     if (!v) return;
-    if (Math.abs(v.speed) > 6) { this.ui.notify('Slow down first!', 'bad'); return; }
+    if (Math.abs(v.speed) > CONFIG.vehicle.exitMaxSpeed) { this.ui.notify('Slow down first!', 'bad'); return; }
     v.occupied = false; v.speed = 0;
+    v.stopEngine();
+    v.setSiren(false);
+    this.audio.stopEngineLoop();
+    this.audio.siren(false);
+    this.ui.hideVehicleCard();
     // Pick the first free spot around the car.
     let spot = null;
     for (const s of v.exitSpots()) {
@@ -806,6 +862,143 @@ export class Game {
     if (!spot) spot = new THREE.Vector3(v.pos.x, v.pos.y, v.pos.z);
     this.player.exitVehicle(spot.x, spot.y, spot.z, v.rot);
     this.camCtrl.snap(this.player.pos);
+  }
+
+  /** Prompt line shown along the bottom while driving. */
+  _drivingPrompt() {
+    const v = this.player.inVehicle;
+    if (!v) return null;
+    const bits = ['<b>V</b> Get out', '<b>Space</b> Handbrake', '<b>H</b> Horn'];
+    if (v.def.siren) bits.push('<b>B</b> Siren');
+    if (!v.isElectric()) bits.push('<b>Z/X</b> Gears');
+    if (!v.engineOn && v.hasFuel()) bits.unshift('<b>W</b> Start engine');
+    if (!v.hasFuel()) bits.unshift('<span class="bad">Out of fuel</span>');
+    return bits.join(' · ');
+  }
+
+  /** Continuous engine / tyre / siren audio for the vehicle being driven. */
+  _driveAudio(dt, v) {
+    const load = Math.min(1, Math.abs(v.throttle) * 0.7 + v.wheelSpin * 0.3);
+    this.audio.engineLoop({
+      running: v.engineOn,
+      rpm01: v.rpmFraction(),
+      load,
+      speed01: Math.min(1, Math.abs(v.speed) / Math.max(8, v.maxSpeed * 0.7)),
+      electric: v.isElectric(),
+      cylinders: v.def.mass > 5000 ? 6 : v.class === 'motorcycle' ? 2 : 4,
+    });
+    this.audio.siren(v.sirenOn, v.def.siren || 'police');
+
+    // tyre squeal while the tyres are past their limit
+    this._skidSoundT = (this._skidSoundT || 0) - dt;
+    if (v.skid > 0.42 && Math.abs(v.speed) > 3 && this._skidSoundT <= 0) {
+      this._skidSoundT = 0.22;
+      this.audio.skid(Math.min(1, v.skid));
+    }
+  }
+
+  /** Camera and player feedback derived from how the vehicle is behaving. */
+  _driveFeedback(dt, v) {
+    // rough ride: shake grows with speed over bumps and with engine damage
+    const rough = v.engineHealth < 40 && v.engineOn ? 0.03 : 0;
+    if (rough > 0) this.camCtrl.addShake(rough, 0.1);
+
+    // sirens and horns move pedestrians
+    if (v.sirenOn || v.hornTimer > 0.4) {
+      const radius = v.sirenOn ? CONFIG.vehicle.sirenScareRadius : CONFIG.vehicle.hornScareRadius;
+      this._scareT = (this._scareT || 0) - dt;
+      if (this._scareT <= 0) {
+        this._scareT = 0.5;
+        for (const npc of this.npcMgr.all) {
+          if (!npc.scare || npc.dead) continue;
+          const dx = npc.pos.x - v.pos.x, dz = npc.pos.z - v.pos.z;
+          if (dx * dx + dz * dz < radius * radius) npc.scare(v.pos, 4);
+        }
+      }
+    }
+
+    // running people over
+    this._runOverT = (this._runOverT || 0) - dt;
+    if (Math.abs(v.speed) > 4 && this._runOverT <= 0) {
+      for (const npc of this.npcMgr.all) {
+        if (npc.dead) continue;
+        const dx = npc.pos.x - v.pos.x, dz = npc.pos.z - v.pos.z;
+        if (dx * dx + dz * dz > 16) continue;
+        const f = v.forward(), r = v.right();
+        const along = dx * f.x + dz * f.z, across = dx * r.x + dz * r.z;
+        if (Math.abs(along) < v.halfLength + 0.4 && Math.abs(across) < v.halfWidth + 0.3) {
+          this._runOverT = 0.8;
+          const force = Math.abs(v.speed);
+          npc.takeDamage?.(force * 9);      // enemies take real damage
+          npc.scare?.(v.pos, 6);            // everyone else runs
+          this.audio.hit();
+          this.camCtrl.addShake(0.25, 0.25);
+          v.speed *= 0.86;
+          this._commitCrime?.(npc.id, force > 9 ? 3 : 2);
+          this.ui.notify('You hit someone!', 'bad');
+          break;
+        }
+      }
+    }
+  }
+
+  /** Crash response: shake, noise, and the driver taking a share of it. */
+  _onVehicleImpact(force, v) {
+    this.camCtrl.addShake(Math.min(0.9, force * CONFIG.vehicle.damageShakeScale), 0.3);
+    this.audio.crash(Math.min(1, force / 14));
+    if (v.occupied && force > CONFIG.vehicle.hurtSpeed) {
+      const dmg = (force - CONFIG.vehicle.hurtSpeed) * CONFIG.vehicle.hurtScale / Math.max(0.5, v.def.armour);
+      this.state.health = Math.max(0, this.state.health - dmg);
+      this.ui.setVignette(0, Math.min(1, dmg / 30));
+      this.audio.hurt();
+    }
+  }
+
+  /** Vehicle system events -> sound, HUD and consequences. */
+  _onVehicleEvent(name, data, v) {
+    const mine = v.occupied;
+    switch (name) {
+      case 'engine-start': if (mine) this.audio.blip(90, 0.3, 'sawtooth', 0.08); break;
+      case 'horn': this.audio.horn(data?.pitch ?? 1); break;
+      case 'siren': if (mine) this.audio.ui(); break;
+      case 'gear-change': if (mine && !v.isElectric()) this.audio.blip(160, 0.04, 'square', 0.03); break;
+      case 'low-fuel':
+        if (mine) this.ui.notify(`${v.name}: low ${v.isElectric() ? 'charge' : 'fuel'}`, 'bad');
+        break;
+      case 'out-of-fuel':
+        if (mine) {
+          this.ui.notify(`Out of ${v.isElectric() ? 'charge' : 'fuel'} — find a ${v.isElectric() ? 'charger' : 'pump'}`, 'bad');
+          this.audio.fail();
+          this.audio.stopEngineLoop();
+        }
+        break;
+      case 'destroyed':
+        if (mine) {
+          this.ui.notify(`The ${v.name} is wrecked!`, 'bad');
+          this.audio.crash(1);
+          this._exitVehicle();
+        }
+        break;
+      case 'no-fuel':
+        if (mine) {
+          this.ui.notify(`The ${v.name} won't start — the ${v.isElectric() ? 'battery is flat' : 'tank is empty'}`, 'bad');
+          this.audio.fail();
+        }
+        break;
+      case 'refuel': if (mine) this.audio.refuel(); break;
+      default: break;
+    }
+  }
+
+  /** Buy fuel at a pump or charger. */
+  _refuelVehicle(v, station) {
+    if (v.fuel >= v.fuelCapacity - 0.1) { this.ui.notify('Already full', ''); return; }
+    const res = this.vehicleMgr.refuel(v, station, this.state.money);
+    if (res.litres <= 0.01) { this.ui.notify('Not enough money', 'bad'); return; }
+    this.state.money = Math.max(0, this.state.money - res.cost);
+    const unit = v.def.fuelType === 'electric' ? 'kWh' : 'L';
+    this.ui.notify(`${res.litres.toFixed(1)}${unit} for $${res.cost.toFixed(2)}`, 'good');
+    this.audio.cash();
   }
 
   // =========================================================================
@@ -876,19 +1069,27 @@ export class Game {
   // Save / load
   // =========================================================================
   save() {
-    this.state.spawn = { x: this.player.pos.x, y: this.player.pos.y, z: this.player.pos.z, rot: this.player.rot, interior: this.insideInterior };
+    this._captureSaveState();
     SaveManager.save(this.state.serialize());
     this.ui.notify('Game saved 💾', 'good');
   }
   _quietSave() {
-    this.state.spawn = { x: this.player.pos.x, y: this.player.pos.y, z: this.player.pos.z, rot: this.player.rot, interior: this.insideInterior };
+    this._captureSaveState();
     SaveManager.save(this.state.serialize());
+  }
+  /** Fold the live world (player position, fleet condition) into the state. */
+  _captureSaveState() {
+    this.state.spawn = { x: this.player.pos.x, y: this.player.pos.y, z: this.player.pos.z, rot: this.player.rot, interior: this.insideInterior };
+    // where every vehicle ended up, and what condition you left it in
+    this.state.fleet = this.vehicleMgr.snapshot();
   }
   load(silent) {
     const d = SaveManager.load();
     if (!d) { if (!silent) this.ui.notify('No save found', 'bad'); return; }
     this.state.deserialize(d);
     this.npcMgr.clearEnemies(); this.cops = [];
+    if (this.player.inVehicle) this._exitVehicle();
+    if (this.state.fleet) this.vehicleMgr.restore(this.state.fleet);
     if (this.state.spawn) {
       this.player.setPosition(this.state.spawn.x, this.state.spawn.y, this.state.spawn.z, this.state.spawn.rot);
       this.insideInterior = this.state.spawn.interior || null;

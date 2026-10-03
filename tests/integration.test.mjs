@@ -140,6 +140,34 @@ test('every player event is handled by Game.js', () => {
   assert(missing.length === 0, `unhandled player events: ${missing.join(', ')}`);
 });
 
+test('every vehicle system event is handled by Game.js', () => {
+  const vehicleJs = sources['src/entities/Vehicle.js'];
+  const emitted = new Set([...vehicleJs.matchAll(/this\._emit\('([^']+)'/g)].map(m => m[1]));
+  assert(emitted.size >= 8, `only ${emitted.size} vehicle events are emitted`);
+  const handled = gameJs.slice(gameJs.indexOf('_onVehicleEvent'));
+  // 'lights' and 'gear-change' are cosmetic; everything else must be acted on
+  const cosmetic = new Set(['lights', 'engine-stop', 'skid', 'impact', 'engine-dead']);
+  const missing = [...emitted].filter(e => !cosmetic.has(e) && !handled.includes(`'${e}'`));
+  assert(missing.length === 0, `unhandled vehicle events: ${missing.join(', ')}`);
+});
+
+test('the vehicle HUD is present, styled and driven by the UI', () => {
+  for (const id of ['vehicle-hud', 'vh-speed', 'vh-gear', 'vh-fuel', 'vh-health', 'vh-name']) {
+    assert(html.includes(`id="${id}"`), `index.html is missing #${id}`);
+  }
+  assert(css.includes('#vehicle-hud'), 'style.css has no rule for #vehicle-hud');
+  assert(uiJs.includes('updateVehicleHUD'), 'UI.js cannot drive the vehicle HUD');
+  assert(gameJs.includes('updateVehicleHUD'), 'Game.js never updates the vehicle HUD');
+});
+
+test('every vehicle in the catalogue can be built and measured', () => {
+  const vehiclesJs = sources['src/data/vehicles.js'];
+  const bodies = new Set([...sources['src/entities/VehicleMeshes.js'].matchAll(/^  (\w+)\(ctx\)/gm)].map(m => m[1]));
+  for (const m of vehiclesJs.matchAll(/body: '([^']+)'/g)) {
+    assert(bodies.has(m[1]), `no mesh builder for body style '${m[1]}'`);
+  }
+});
+
 test('every weapon event is handled by Game.js', () => {
   const weaponsJs = sources['src/systems/Weapons.js'];
   const emitted = new Set([...weaponsJs.matchAll(/this\.onEvent\('([^']+)'/g)].map(m => m[1]));

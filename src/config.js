@@ -141,6 +141,13 @@ export const CONFIG = {
     slideDistance: 5.6,
     vehicleDistance: 8.4,
     vehicleHeight: 2.4,
+    // the chase camera is pulled back and raised in proportion to the body,
+    // so a bus is framed like a bus and a scooter like a scooter
+    vehicleSizeScale: 0.85,
+    vehicleMinDistance: 5.0,
+    vehicleMaxDistance: 16.0,
+    vehicleSpeedPull: 2.6,  // extra distance at full chat
+    vehicleFovSpeed: 16,    // extra FOV degrees at full chat
     lookAhead: 0.28,        // leads the camera in the direction of travel
   },
 
@@ -165,6 +172,32 @@ export const CONFIG = {
     startHour: 8,
     npcCount: 46,               // ambient NPCs count in data
     trafficCars: 8,
+  },
+
+  // ---------------------------------------------------------------------
+  // VEHICLES
+  // Per-vehicle specifications live in data/vehicles.js — these are the
+  // global rules that apply to the whole fleet.
+  // ---------------------------------------------------------------------
+  vehicle: {
+    // Fuel burns at a realistic litres-per-hour, which would make a tank last
+    // for hours of play. Scaling it up turns fuel into an actual decision
+    // without making the consumption model a lie.
+    fuelScale: 24,
+    enterRange: 3.6,            // metres you can be from a door to get in
+    exitMaxSpeed: 6.0,          // m/s above which you cannot bail out
+    stationRange: 7.0,          // metres from a pump to refuel
+    damageShakeScale: 0.06,     // camera shake per m/s of impact
+    hurtSpeed: 7.0,             // impact speed that starts hurting the driver
+    hurtScale: 2.2,             // damage per m/s above that
+    crimeOnTheft: true,         // hot-wiring a locked vehicle is noticed
+    stealWantedLevel: 1,
+    emergencyStealWanted: 2,
+    wetGrip: 0.78,              // grip multiplier in the rain
+    nightLightsFrom: 18.3,      // hour headlights come on
+    nightLightsTo: 6.6,
+    hornScareRadius: 12,        // NPCs react to the horn within this
+    sirenScareRadius: 20,
   },
 
   presets: {

@@ -81,6 +81,20 @@ Then **click the game screen** to lock the mouse and start playing.
 | Map | `M` |
 | Dialogue choices | Click, or number keys `1‑6` |
 
+**Driving**
+
+| Action | Key |
+|---|---|
+| Get in / get out | `V` (you must be nearly stopped to get out) |
+| Throttle / brake / reverse | `W` / `S` — `S` brakes first, reverses once stopped |
+| Steer | `A` `D` |
+| Handbrake | `Space` — locks the rear axle, swings the back out |
+| Change gear manually | `Z` down · `X` up (takes the gearbox out of automatic) |
+| Horn | `H` |
+| Headlights | `L` (they come on by themselves at night) |
+| Siren | `B` (emergency vehicles only) |
+| Refuel at a pump | `E` while stopped on the forecourt |
+
 **Gamepad** (plug one in and it takes over automatically): left stick move,
 right stick look, `A` jump, `B` crouch, `X` melee, `Y` interact, `LB`
 draw/holster, `RB` enter/exit vehicle, `LT` aim, `RT` fire, `L3` sprint,
@@ -125,7 +139,9 @@ the full list lives in the pause menu.
 **Systems**
 - Third‑person character controller (walk/run/jump/attack) with collision.
 - **Combat** with melee weapons (fists, bat, crowbar, stun baton, …).
-- **Drivable vehicles** + arcade driving.
+- **16 drivable vehicles** — cars, motorcycles, trucks, vans, buses and
+  emergency services, each with its own engine, gearbox, grip, fuel tank and
+  damage model. See [Driving](#-driving).
 - **Economy**: earn/spend money, dynamic prices that react to reputation.
 - **Inventory**, equippable weapons & gear, consumables.
 - **Character progression**: XP, levels, growing health/stamina.
@@ -164,6 +180,7 @@ My-First-Web-Game/
     │   ├── items.js          # item catalog
     │   ├── factions.js       # factions + reputation tracks
     │   ├── missions.js       # 100 missions (50 student + 50 gangster)
+    │   ├── vehicles.js       # vehicle specs (engines, gearing, grip, fuel) + spawns
     │   └── dialogue.js       # relationship-aware dialogue lines
     ├── world/
     │   └── TownBuilder.js    # builds all 3D geometry, colliders, doors
@@ -173,7 +190,8 @@ My-First-Web-Game/
     │   ├── PlayerAnimator.js # procedural layered animation (locomotion/aim/attack)
     │   ├── Player.js         # third-person controller state machine
     │   ├── NPC.js            # NPC AI (schedules, wander, panic, enemy combat)
-    │   └── Vehicle.js        # drivable car (steering, drift, suspension)
+    │   ├── Vehicle.js        # vehicle simulation (see "Driving" below)
+    │   └── VehicleMeshes.js  # procedural bodies for every vehicle style
     ├── systems/
     │   ├── GameState.js      # money, inventory, rep, relationships, XP, save
     │   ├── Physics.js        # AABB collision world: sweeps, steps, ledges, rays
@@ -182,6 +200,7 @@ My-First-Web-Game/
     │   ├── Weapons.js        # hit-scan firearms, spread, recoil, tracers
     │   ├── Combat.js
     │   ├── NPCManager.js     # crowd spawn, LOD, enemy/cop spawning
+    │   ├── VehicleManager.js # the town fleet: parking, culling, fuel stations
     │   ├── MissionManager.js # objective engine, rewards, unlocking
     │   └── DialogueManager.js
     ├── ui/
@@ -192,6 +211,7 @@ My-First-Web-Game/
 tests/                        # headless test suite (`npm test`)
 ├── controller.test.mjs       # movement, parkour, collision, combat, camera
 ├── world.test.mjs            # the real town: colliders, ladders, doors
+├── vehicles.test.mjs         # physics, gearbox, fuel, damage, collisions, fleet
 ├── integration.test.mjs      # DOM ids, UI methods/hooks, config keys, events
 └── boot.test.mjs             # boots the whole game in jsdom and plays it
 ```
@@ -247,6 +267,61 @@ thing you mean: a door, a shop counter, a ladder, a car, or a person.
 
 ---
 
+## 🚗 Driving
+
+Sixteen vehicles across six classes — hatchbacks, saloons, a sports coupe, a
+muscle car, taxis, an EV, a superbike, a scooter, a pickup, a panel van, a box
+truck, a city bus, a school bus, a police interceptor, an ambulance and a fire
+engine. Every one of them is described in SI units in `src/data/vehicles.js`
+(mass, kW, Nm, gear ratios, Cd·A, tyre friction, brake force, wheelbase, tank
+size) and `src/entities/Vehicle.js` derives the behaviour from those numbers.
+Nothing is special‑cased: a bus understeers and a sport bike is twitchy purely
+because of their specifications.
+
+**What the simulation models**
+
+- **Bicycle‑model handling** — each axle develops a lateral force from its slip
+  angle; the resulting forces move the body and spin it about its yaw axis.
+  Below walking pace it blends to a kinematic steer so parking stays stable.
+- **A real gearbox** — torque curve, ratios, final drive, auto shifting that
+  holds gears longer in a sporty car, manual override on `Z`/`X`, clutch slip
+  that multiplies torque off the line, and a redline you can bounce off.
+- **Friction circle** — braking and cornering compete for the same grip, so you
+  cannot do both at full force. Longitudinal load transfer adds front grip under
+  braking and lifts the rear under power.
+- **Handbrake** — clamps the rear axle: it slows you down *and* costs rear grip,
+  which is what makes the back step out.
+- **Fuel and energy** — burned against the engine's actual load, not a timer.
+  Electrics use a single ratio and recover charge under regenerative braking.
+  Run dry and the engine stops; refuel at a pump or a charger with `E`.
+- **Damage** — impacts are costed from kinetic energy and softened by the body's
+  armour. A head‑on hit damages the engine, a rear‑ender holes the tank (which
+  then leaks), a side swipe bends the steering so the car pulls. Enough abuse
+  writes it off, with smoke and fire on the way there.
+- **Oriented‑box collisions** — separating‑axis tests against the world and
+  against other vehicles, resolved with proper two‑body impulses, so a seven
+  tonne truck shoves a parked hatchback out of the way. Kerbs are driven over
+  and low bridges are driven under — if you are short enough.
+
+**What you see and hear** — a speedometer that sweeps against *that* vehicle's
+top speed, a tachometer, gear, fuel and body‑condition gauges, warning lamps for
+a leaking tank or a burning engine, and a performance card dealt when you get in
+whose figures come from running the simulation headlessly. The engine is a
+continuous Web Audio source whose pitch tracks the revs through every gear
+change, with tyre squeal, sirens, horns and crash noise on top.
+
+| | 0–100 km/h | Top speed | Stops from 100 | Turning circle |
+|---|---|---|---|---|
+| Mirado GT (sports) | 4.2 s | 277 km/h | 29 m | 11.0 m |
+| Vanguard Interceptor (police) | 3.8 s | 240 km/h | 31 m | 11.8 m |
+| Kessler Nib (hatchback) | 10.7 s | 172 km/h | 37 m | 9.1 m |
+| Ridgeback 2500 (pickup) | 7.4 s | 175 km/h | 41 m | 16.1 m |
+| Haulmaster 7T (box truck) | 29.2 s | 119 km/h | 60 m | 22.6 m |
+| Brackenridge Transit (bus) | 43.3 s | 100 km/h | 62 m | 25.9 m |
+| Pico 125 (scooter) | never | 85 km/h | 32 m | 3.4 m |
+
+---
+
 ## 🧪 Tests
 
 ```
@@ -254,7 +329,7 @@ npm install     # dev-only: three + jsdom, for the headless tests
 npm test
 ```
 
-90 assertions run in Node with no browser and no GPU:
+154 assertions run in Node with no browser and no GPU:
 
 - `npm run test:controller` — speed tiers, crouch under ceilings, jump feel,
   sliding, wall sliding, step‑ups, vaulting, mantling, ledge hangs and shimmies,
@@ -262,12 +337,21 @@ npm test
 - `npm run test:world` — builds the actual town and verifies every collider,
   that every ladder can be climbed to a real roof, that rooftop lips can be
   caught in mid‑air, and that every door has somewhere to stand.
+- `npm run test:vehicles` — drives the real simulation: every vehicle pulls away
+  and reaches its specified top speed, acceleration and braking rank the fleet
+  correctly, full lock traces the specified turning circle, the handbrake breaks
+  traction, the gearbox works up and down the ratios, fuel burns under load and
+  runs out, crashes damage the right components, and the fleet manager parks,
+  culls, refuels and saves.
 - `npm run test:integration` — static audit of the seams a browser would break
   on: DOM ids, UI methods, UI hooks, `CONFIG` paths, input actions, events.
 - `npm run test:boot` — boots the **real game** inside jsdom with a stubbed
   renderer and plays it with synthetic input: walking, sprinting, crouching,
   jumping, sliding, shooting, driving, entering buildings, climbing a ladder,
-  saving.
+  saving — plus the whole town fleet: that nothing is parked inside a building,
+  that a sports car out‑accelerates a bus, that the instrument cluster reads
+  out correctly, that fuel is consumed and can be bought, and that stealing a
+  police car is noticed.
 
 ---
 
